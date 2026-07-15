@@ -52,19 +52,32 @@ ADMIN_DIR = Path(__file__).resolve().parent / "admin_static"
 def _bootstrap_runtime() -> None:
     try:
         ensure_dirs()
+        # Restore originals from Railway Bucket if local volume missing them
+        try:
+            from modules.object_store import is_enabled, restore_missing_to_local
+
+            if is_enabled():
+                n_restored = restore_missing_to_local(DATA_DIR)
+                if n_restored:
+                    logger.info("Restored %s upload(s) from S3 bucket", n_restored)
+        except Exception:  # noqa: BLE001
+            logger.exception("S3 restore skipped/failed")
+
         n = sync_seed_pdfs()
         if n:
             logger.info("Synced %s seed file(s) into %s", n, DATA_DIR)
-        from config import SEED_DATA_DIR
+        from config import SEED_DATA_DIR, storage_health
 
-        if SEED_DATA_DIR.exists() and SEED_DATA_DIR.resolve() != DATA_DIR.resolve():
-            for src in SEED_DATA_DIR.glob("*.docx"):
-                dest = DATA_DIR / src.name
-                try:
-                    if not dest.exists() or dest.stat().st_size != src.stat().st_size:
-                        shutil.copy2(src, dest)
-                except OSError:
-                    pass
+        health = storage_health()
+        if health.get("warning"):
+            logger.warning("STORAGE: %s", health["warning"])
+        logger.info(
+            "Persist root=%s data=%s storage=%s s3=%s",
+            health.get("persist_root"),
+            health.get("data_dir"),
+            health.get("storage_dir"),
+            health.get("s3_enabled"),
+        )
     except Exception:  # noqa: BLE001
         logger.exception("Runtime bootstrap failed")
 
@@ -392,12 +405,16 @@ async def ingest_upload_bulk(
 @app.get("/admin/api/stats")
 def admin_stats(_key: str = Depends(require_admin_key)) -> dict[str, Any]:
     _bootstrap_runtime()
+    from config import storage_health
     from modules.db import db_health
     from modules.ingest import get_index_stats
+    from modules.object_store import status as s3_status
 
     out = get_index_stats()
     out["postgres"] = db_health()
     out["runtime"] = runtime_info()
+    out["storage"] = storage_health()
+    out["bucket"] = s3_status()
     return out
 
 

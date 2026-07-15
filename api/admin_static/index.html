@@ -145,6 +145,16 @@
 
       <!-- OVERVIEW -->
       <section id="tab-overview" class="tab-panel">
+        <div class="card hidden" id="storageWarnCard">
+          <h2>Storage warning</h2>
+          <p id="storageWarn" class="err" style="margin:0"></p>
+          <p class="mut" style="margin:8px 0 0">
+            Railway allows <b>one volume per service</b>. Mount it at <b>/data</b>
+            so uploads (<code>/data/uploads</code>) and embeddings
+            (<code>/data/storage</code>) both survive redeploys.
+            Optional: connect a <b>Bucket</b> for S3 file backup.
+          </p>
+        </div>
         <div class="card">
           <h2>Totals</h2>
           <div class="grid" id="statsGrid"></div>
@@ -420,6 +430,23 @@
         <div class="stat"><b>${idx.document_count ?? 0}</b><span>Documents</span></div>
         <div class="stat"><b>${chat.configured ? 'ON' : 'OFF'}</b><span>Chat DB</span></div>
       `;
+
+      // storage warning from stats endpoint if present after extra fetch
+      try {
+        const st = await api('/admin/api/stats');
+        const sh = st.storage || {};
+        const warnEl = document.getElementById('storageWarn');
+        const warnCard = document.getElementById('storageWarnCard');
+        if (sh.warning) {
+          warnCard.classList.remove('hidden');
+          warnEl.textContent = sh.warning +
+            ' | persist=' + (sh.persist_root || '') +
+            ' | s3=' + (sh.s3_enabled ? 'on' : 'off');
+        } else {
+          warnCard.classList.add('hidden');
+          warnEl.textContent = '';
+        }
+      } catch (_) { /* ignore */ }
 
       renderDayChart(chat.by_day || []);
       renderPills('sourceChart', chat.by_source || [], 'source', 'count');

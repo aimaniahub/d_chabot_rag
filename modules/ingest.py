@@ -5,7 +5,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from config import CHROMA_DIR, DATA_DIR, EMBEDDING_MODEL, ensure_dirs
+from config import (
+    CHROMA_DIR,
+    DATA_DIR,
+    EMBEDDING_MODEL,
+    PRUNE_MISSING_ON_INGEST,
+    ensure_dirs,
+)
 from modules.chunker import create_chunks_from_pages
 from modules.document_loader import SUPPORTED_EXTENSIONS, load_document_pages
 from modules.embedder import Embedder
@@ -161,6 +167,14 @@ def _ingest_file_inner(
             pages=len(pages),
             chunk_count=len(chunks),
         )
+        # Best-effort backup of original file to Railway Bucket / S3
+        try:
+            from modules.object_store import is_enabled, upload_file
+
+            if is_enabled():
+                upload_file(path)
+        except Exception:  # noqa: BLE001
+            pass
         return FileIngestResult(
             path=str(path),
             doc_id=doc_id,
@@ -199,17 +213,33 @@ def ingest_paths(
     data_dir: Path | None = None,
     rebuild: bool = False,
     force: bool = False,
+    prune_missing_files: bool | None = None,
     embedder: Embedder | None = None,
     store: VectorStore | None = None,
 ) -> IngestReport:
-    """Ingest one or more PDF/DOCX files (default: all under data/)."""
+    """Ingest one or more PDF/DOCX/MD files (default: all under uploads/)."""
     ensure_dirs()
     data_dir = Path(data_dir or DATA_DIR)
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    # If local disk lost files but S3 bucket has them, restore first
+    try:
+        from modules.object_store import is_enabled, restore_missing_to_local
+
+        if is_enabled() and paths is None:
+            restore_missing_to_local(data_dir)
+    except Exception:  # noqa: BLE001
+        pass
+
     embedder = embedder or Embedder()
     store = store or VectorStore()
     manifest = load_manifest()
+
+    do_prune = (
+        PRUNE_MISSING_ON_INGEST
+        if prune_missing_files is None
+        else prune_missing_files
+    )
 
     with timer() as total_t:
         if rebuild:
@@ -238,7 +268,8 @@ def ingest_paths(
                 )
             )
 
-        if paths is None:
+        # Default OFF: pruning when disk is empty after redeploy wiped the whole index
+        if paths is None and do_prune:
             report.results.extend(prune_missing(store, manifest, data_dir))
 
         save_manifest(manifest)
@@ -282,6 +313,15 @@ def delete_document(
     store.delete_doc(doc_id)
     remove_document(manifest, doc_id)
     save_manifest(manifest)
+
+    # Remove from S3 bucket if enabled
+    try:
+        from modules.object_store import delete_object, is_enabled, object_key
+
+        if is_enabled():
+            delete_object(object_key(doc_id))
+    except Exception:  # noqa: BLE001
+        pass
 
     file_deleted = False
     path_tried = None

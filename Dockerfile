@@ -5,15 +5,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HF_HOME=/app/storage/.cache/huggingface \
-    HUGGINGFACE_HUB_CACHE=/app/storage/.cache/huggingface \
-    FASTEMBED_CACHE_PATH=/app/storage/.cache/fastembed \
-    XDG_CACHE_HOME=/app/storage/.cache \
+    # Single persistent root — mount Railway Volume at /data
+    PERSIST_ROOT=/data \
+    DATA_DIR=/data/uploads \
+    STORAGE_DIR=/data/storage \
+    HF_HOME=/data/storage/.cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/data/storage/.cache/huggingface \
+    FASTEMBED_CACHE_PATH=/data/storage/.cache/fastembed \
+    XDG_CACHE_HOME=/data/storage/.cache \
     API_HOST=0.0.0.0 \
     PORT=8000 \
     AUTO_INGEST_ON_START=true \
-    DATA_DIR=/app/data \
-    STORAGE_DIR=/app/storage
+    PRUNE_MISSING_ON_INGEST=false \
+    USE_DATA_VOLUME=true
 
 WORKDIR /app
 
@@ -27,11 +31,11 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /app/data /app/storage /app/eval_reports /app/storage/.cache \
+# /data is the volume mount point (uploads + chroma live here)
+RUN mkdir -p /data/uploads /data/storage /data/storage/chroma /data/storage/.cache /data/eval_reports \
     && sed -i 's/\r$//' /app/scripts/docker-entrypoint.sh \
     && chmod +x /app/scripts/docker-entrypoint.sh
 
-# Railway injects PORT; entrypoint rewrites uvicorn bind address
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \

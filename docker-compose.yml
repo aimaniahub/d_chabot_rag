@@ -14,12 +14,13 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       AUTO_INGEST_ON_START: ${AUTO_INGEST_ON_START:-true}
       PORT: "8000"
-      DATA_DIR: /app/data
-      STORAGE_DIR: /app/storage
+      PERSIST_ROOT: /data
+      DATA_DIR: /data/uploads
+      STORAGE_DIR: /data/storage
+      PRUNE_MISSING_ON_INGEST: "false"
     volumes:
-      # Persist index + uploaded PDFs across restarts
-      - ./data:/app/data
-      - ./storage:/app/storage
+      # Single volume root (same as Railway /data mount)
+      - ./persist_data:/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 30s
