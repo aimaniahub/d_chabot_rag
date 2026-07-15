@@ -6,80 +6,119 @@
   <title>Darvi RAG Admin</title>
   <style>
     :root {
-      --g: #1B4C35;
-      --g2: #2E7D32;
-      --bg: #f4f6f5;
-      --card: #fff;
-      --bd: #e2e8e0;
-      --tx: #1a1a1a;
-      --mut: #64748b;
+      --g: #1B4C35; --g2: #2E7D32; --bg: #f0f3f1; --card: #fff;
+      --bd: #dce5df; --tx: #14201a; --mut: #64748b; --danger: #b91c1c;
     }
     * { box-sizing: border-box; }
     body {
-      margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       background: var(--bg); color: var(--tx);
     }
     header {
-      background: linear-gradient(90deg, var(--g), var(--g2));
-      color: #fff; padding: 14px 20px;
+      background: linear-gradient(95deg, var(--g), var(--g2));
+      color: #fff; padding: 12px 18px;
       display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; flex-wrap: wrap;
+      gap: 10px; flex-wrap: wrap;
+      position: sticky; top: 0; z-index: 20;
     }
-    header h1 { margin: 0; font-size: 1.15rem; font-weight: 650; }
-    header .sub { opacity: .85; font-size: .8rem; }
-    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    header h1 { margin: 0; font-size: 1.1rem; }
+    header .sub { opacity: .85; font-size: .78rem; }
+    main { max-width: 1120px; margin: 0 auto; padding: 14px; }
+    .tabs {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-bottom: 12px; background: #fff;
+      padding: 8px; border-radius: 12px; border: 1px solid var(--bd);
+    }
+    .tabs button {
+      background: transparent; color: var(--mut); border: 0;
+      padding: 8px 12px; border-radius: 8px; font-weight: 600;
+      font-size: .84rem; cursor: pointer;
+    }
+    .tabs button.active { background: var(--g); color: #fff; }
+    .tabs button:hover:not(.active) { background: #eef5f0; color: var(--g); }
     .card {
       background: var(--card); border: 1px solid var(--bd);
-      border-radius: 12px; padding: 16px; margin-bottom: 14px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.04);
+      border-radius: 12px; padding: 14px; margin-bottom: 12px;
     }
-    .card h2 { margin: 0 0 12px; font-size: 1rem; color: var(--g); }
-    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+    .card h2 { margin: 0 0 10px; font-size: .98rem; color: var(--g); }
+    .card h3 { margin: 12px 0 8px; font-size: .88rem; color: #334; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+    }
     .stat {
-      background: #f0f7f2; border-radius: 10px; padding: 12px;
-      border: 1px solid var(--bd);
+      background: #f0f7f2; border: 1px solid var(--bd);
+      border-radius: 10px; padding: 12px;
     }
-    .stat b { display: block; font-size: 1.35rem; color: var(--g); }
-    .stat span { font-size: .75rem; color: var(--mut); }
-    input[type=text], input[type=password], textarea {
-      width: 100%; padding: 10px 12px; border: 1px solid var(--bd);
-      border-radius: 8px; font-size: .9rem;
+    .stat b { display: block; font-size: 1.4rem; color: var(--g); line-height: 1.2; }
+    .stat span { font-size: .72rem; color: var(--mut); }
+    input[type=text], input[type=password], textarea, select {
+      width: 100%; padding: 9px 11px; border: 1px solid var(--bd);
+      border-radius: 8px; font-size: .88rem;
     }
-    button, .btn {
+    button.btn, .btn {
       background: var(--g); color: #fff; border: 0; border-radius: 8px;
-      padding: 10px 14px; font-size: .88rem; cursor: pointer; font-weight: 600;
+      padding: 9px 12px; font-size: .84rem; cursor: pointer; font-weight: 600;
     }
-    button.secondary { background: #475569; }
+    button.secondary { background: #475569; color: #fff; border: 0; border-radius: 8px; padding: 9px 12px; font-weight: 600; cursor: pointer; }
+    button.danger { background: var(--danger); color: #fff; border: 0; border-radius: 8px; padding: 6px 10px; font-size: .78rem; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .5; cursor: not-allowed; }
-    button:hover:not(:disabled) { filter: brightness(1.08); }
-    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .8rem; }
     th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--bd); vertical-align: top; }
-    th { color: var(--mut); font-weight: 600; }
+    th { color: var(--mut); font-weight: 600; font-size: .75rem; }
     .tag {
       display: inline-block; background: #e8f5e9; color: var(--g);
       padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 600;
     }
-    .err { color: #b91c1c; font-size: .85rem; }
-    .ok { color: var(--g); font-size: .85rem; }
-    #loginBox { max-width: 400px; margin: 60px auto; }
+    .err { color: var(--danger); font-size: .84rem; }
+    .ok { color: var(--g); font-size: .84rem; }
+    .mut { color: var(--mut); font-size: .82rem; }
+    #loginBox { max-width: 400px; margin: 50px auto; }
     .hidden { display: none !important; }
     pre {
       white-space: pre-wrap; background: #f8faf9; padding: 10px;
-      border-radius: 8px; font-size: .82rem; border: 1px solid var(--bd);
-      max-height: 220px; overflow: auto;
+      border-radius: 8px; font-size: .8rem; border: 1px solid var(--bd);
+      max-height: 240px; overflow: auto; margin: 8px 0 0;
     }
-    .msg-user { color: #0f172a; }
-    .msg-bot { color: #334155; }
+    .chart-wrap { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 8px; }
+    .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; min-width: 0; }
+    .bar {
+      width: 100%; max-width: 36px; background: linear-gradient(180deg, var(--g2), var(--g));
+      border-radius: 6px 6px 2px 2px; min-height: 2px; transition: height .25s;
+    }
+    .bar-label { font-size: .62rem; color: var(--mut); margin-top: 4px; text-align: center; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-val { font-size: .65rem; color: var(--g); font-weight: 600; margin-bottom: 2px; }
+    .step {
+      display: flex; gap: 10px; padding: 10px; border: 1px solid var(--bd);
+      border-radius: 10px; margin-bottom: 8px; background: #fafcfb;
+    }
+    .step .n {
+      width: 28px; height: 28px; border-radius: 50%; background: var(--g); color: #fff;
+      display: flex; align-items: center; justify-content: center; font-size: .8rem; font-weight: 700; flex-shrink: 0;
+    }
+    .step b { display: block; font-size: .86rem; }
+    .step span { font-size: .78rem; color: var(--mut); }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
+    .pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pill {
+      background: #fff; border: 1px solid var(--bd); border-radius: 999px;
+      padding: 4px 10px; font-size: .75rem;
+    }
+    .pill strong { color: var(--g); }
   </style>
 </head>
 <body>
   <header>
     <div>
       <h1>Darvi RAG Admin</h1>
-      <div class="sub">Monitor index · Upload PDF/DOCX · View chats</div>
+      <div class="sub">Files · Embeddings · Chat monitor · Process</div>
     </div>
     <div class="row hidden" id="headerActions">
+      <button type="button" class="secondary" id="btnRefreshAll">Refresh</button>
       <button type="button" class="secondary" id="btnLogout">Log out</button>
     </div>
   </header>
@@ -87,69 +126,124 @@
   <main>
     <div class="card" id="loginBox">
       <h2>Admin login</h2>
-      <p style="color:var(--mut);font-size:.85rem;margin-top:0">
-        Enter the <b>ADMIN_KEY</b> from Railway variables. This is not public Swagger.
-      </p>
+      <p class="mut" style="margin-top:0">Enter Railway <b>ADMIN_KEY</b>.</p>
       <input type="password" id="adminKey" placeholder="ADMIN_KEY" autocomplete="current-password" />
       <div class="row" style="margin-top:10px">
-        <button type="button" id="btnLogin">Enter dashboard</button>
+        <button type="button" class="btn" id="btnLogin">Enter dashboard</button>
       </div>
       <p id="loginErr" class="err"></p>
     </div>
 
     <div id="dash" class="hidden">
-      <div class="card">
-        <h2>System status</h2>
-        <div class="grid" id="statsGrid"></div>
-        <p id="statusMsg" class="ok" style="margin-bottom:0"></p>
+      <div class="tabs" id="tabBar">
+        <button type="button" data-tab="overview" class="active">Overview</button>
+        <button type="button" data-tab="files">Files</button>
+        <button type="button" data-tab="chats">Chats</button>
+        <button type="button" data-tab="test">Test bot</button>
+        <button type="button" data-tab="process">Process</button>
       </div>
 
-      <div class="card">
-        <h2>Indexed documents</h2>
-        <div class="row" style="margin-bottom:10px">
-          <button type="button" id="btnRefresh">Refresh</button>
-          <button type="button" class="secondary" id="btnIngestAll">Re-index all files</button>
+      <!-- OVERVIEW -->
+      <section id="tab-overview" class="tab-panel">
+        <div class="card">
+          <h2>Totals</h2>
+          <div class="grid" id="statsGrid"></div>
         </div>
-        <div id="docsTable"></div>
-      </div>
-
-      <div class="card">
-        <h2>Upload PDF or DOCX</h2>
-        <div class="row">
-          <input type="file" id="fileInput" accept=".pdf,.docx,application/pdf" />
-          <button type="button" id="btnUpload">Upload &amp; embed</button>
+        <div class="two-col">
+          <div class="card">
+            <h2>Requests per day</h2>
+            <p class="mut" style="margin:0">User questions (last 14 days)</p>
+            <div class="chart-wrap" id="dayChart"></div>
+          </div>
+          <div class="card">
+            <h2>By source</h2>
+            <div id="sourceChart" class="pill-row"></div>
+            <h3>By language</h3>
+            <div id="langChart" class="pill-row"></div>
+          </div>
         </div>
-        <p id="uploadMsg" style="margin-bottom:0"></p>
-      </div>
+      </section>
 
-      <div class="card">
-        <h2>Test chat</h2>
-        <textarea id="chatQ" rows="2" placeholder="Ask a question…"></textarea>
-        <div class="row" style="margin-top:8px">
-          <button type="button" id="btnChat">Ask</button>
+      <!-- FILES -->
+      <section id="tab-files" class="tab-panel hidden">
+        <div class="card">
+          <h2>Upload PDF / DOCX</h2>
+          <div class="row">
+            <input type="file" id="fileInput" accept=".pdf,.docx,application/pdf" />
+            <button type="button" class="btn" id="btnUpload">Upload and embed</button>
+          </div>
+          <p id="uploadMsg" class="mut" style="margin-bottom:0"></p>
         </div>
-        <pre id="chatOut" class="hidden"></pre>
-      </div>
+        <div class="card">
+          <h2>Indexed documents</h2>
+          <div class="row" style="margin-bottom:10px">
+            <button type="button" class="btn" id="btnRefreshDocs">Refresh list</button>
+            <button type="button" class="secondary" id="btnIngestAll">Re-index all files</button>
+            <button type="button" class="secondary" id="btnRebuild">Full rebuild</button>
+          </div>
+          <p class="mut">Remove deletes vectors from Chroma and the file from disk.</p>
+          <div id="docsTable"></div>
+        </div>
+      </section>
 
-      <div class="card">
-        <h2>Recent chat messages</h2>
-        <div id="chatsTable"></div>
-      </div>
+      <!-- CHATS -->
+      <section id="tab-chats" class="tab-panel hidden">
+        <div class="card">
+          <h2>Chat monitor</h2>
+          <div class="row" style="margin-bottom:10px">
+            <button type="button" class="btn" id="btnRefreshChats">Refresh chats</button>
+            <select id="chatLimit" style="width:auto">
+              <option value="30">Last 30</option>
+              <option value="50" selected>Last 50</option>
+              <option value="100">Last 100</option>
+            </select>
+          </div>
+          <div id="chatsTable"></div>
+        </div>
+      </section>
+
+      <!-- TEST -->
+      <section id="tab-test" class="tab-panel hidden">
+        <div class="card">
+          <h2>Test bot</h2>
+          <textarea id="chatQ" rows="3" placeholder="Ask about plants, prices, services…"></textarea>
+          <div class="row" style="margin-top:8px">
+            <button type="button" class="btn" id="btnChat">Ask</button>
+          </div>
+          <pre id="chatOut" class="hidden"></pre>
+        </div>
+      </section>
+
+      <!-- PROCESS -->
+      <section id="tab-process" class="tab-panel hidden">
+        <div class="card">
+          <h2>How the bot works</h2>
+          <div id="processSteps"></div>
+        </div>
+        <div class="card">
+          <h2>Live configuration</h2>
+          <pre id="processConfig"></pre>
+        </div>
+      </section>
     </div>
   </main>
 
   <script>
     const KEY = 'darvi_admin_key';
     let adminKey = sessionStorage.getItem(KEY) || '';
+    let lastAnalytics = null;
+    let lastStats = null;
 
-    function headers() {
-      return { 'X-API-Key': adminKey, 'Content-Type': 'application/json' };
+    function headers(json = true) {
+      const h = { 'X-API-Key': adminKey };
+      if (json) h['Content-Type'] = 'application/json';
+      return h;
     }
 
     async function api(path, opts = {}) {
       const res = await fetch(path, {
         ...opts,
-        headers: { ...headers(), ...(opts.headers || {}) },
+        headers: { ...headers(!(opts.body instanceof FormData)), ...(opts.headers || {}) },
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -165,49 +259,162 @@
       document.getElementById('headerActions').classList.toggle('hidden', !on);
     }
 
-    async function loadAll() {
-      const [stats, chats] = await Promise.all([
-        api('/admin/api/stats'),
-        api('/admin/api/chats?limit=30'),
-      ]);
-      const g = document.getElementById('statsGrid');
-      const pg = stats.postgres || {};
-      g.innerHTML = `
-        <div class="stat"><b>${stats.chunk_count ?? 0}</b><span>Chunks</span></div>
-        <div class="stat"><b>${(stats.documents || []).length}</b><span>Documents</span></div>
-        <div class="stat"><b>${pg.message_count ?? '—'}</b><span>Chat messages</span></div>
-        <div class="stat"><b>${pg.ok ? 'OK' : '—'}</b><span>Postgres</span></div>
-      `;
-      document.getElementById('statusMsg').textContent =
-        'Embedding: ' + (stats.embedding_model || '—');
-
-      const docs = stats.documents || [];
-      document.getElementById('docsTable').innerHTML = docs.length
-        ? `<table><thead><tr><th>File</th><th>Pages</th><th>Chunks</th><th>Indexed</th></tr></thead>
-           <tbody>${docs.map(d => `<tr>
-             <td><span class="tag">${d.doc_id}</span></td>
-             <td>${d.pages ?? '—'}</td>
-             <td>${d.chunk_count ?? '—'}</td>
-             <td>${(d.indexed_at || '').slice(0, 19)}</td>
-           </tr>`).join('')}</tbody></table>`
-        : '<p class="err">No documents indexed yet. Upload a PDF/DOCX.</p>';
-
-      const msgs = chats.messages || [];
-      document.getElementById('chatsTable').innerHTML = msgs.length
-        ? `<table><thead><tr><th>When</th><th>Role</th><th>Source</th><th>Content</th></tr></thead>
-           <tbody>${msgs.map(m => `<tr>
-             <td>${(m.created_at || '').slice(0, 19)}</td>
-             <td>${m.role}</td>
-             <td>${m.source || ''}</td>
-             <td class="${m.role === 'user' ? 'msg-user' : 'msg-bot'}">${escapeHtml((m.content || '').slice(0, 280))}</td>
-           </tr>`).join('')}</tbody></table>`
-        : '<p style="color:var(--mut)">No chats logged yet (needs Postgres).</p>';
+    function switchTab(name) {
+      document.querySelectorAll('.tabs button').forEach(b => {
+        b.classList.toggle('active', b.dataset.tab === name);
+      });
+      document.querySelectorAll('.tab-panel').forEach(p => {
+        p.classList.toggle('hidden', p.id !== 'tab-' + name);
+      });
     }
 
+    document.getElementById('tabBar').onclick = (e) => {
+      const b = e.target.closest('button[data-tab]');
+      if (b) switchTab(b.dataset.tab);
+    };
+
     function escapeHtml(s) {
-      return s.replace(/[&<>"']/g, c => ({
+      return String(s || '').replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
       }[c]));
+    }
+
+    function renderDayChart(byDay) {
+      const el = document.getElementById('dayChart');
+      if (!byDay || !byDay.length) {
+        el.innerHTML = '<p class="mut">No request data yet.</p>';
+        return;
+      }
+      const max = Math.max(...byDay.map(d => d.count), 1);
+      el.innerHTML = byDay.map(d => {
+        const h = Math.max(4, Math.round((d.count / max) * 110));
+        const label = (d.day || '').slice(5); // MM-DD
+        return `<div class="bar-col">
+          <div class="bar-val">${d.count}</div>
+          <div class="bar" style="height:${h}px" title="${escapeHtml(d.day)}: ${d.count}"></div>
+          <div class="bar-label">${escapeHtml(label)}</div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderPills(elId, items, nameKey, countKey) {
+      const el = document.getElementById(elId);
+      if (!items || !items.length) {
+        el.innerHTML = '<span class="mut">No data</span>';
+        return;
+      }
+      el.innerHTML = items.map(i =>
+        `<span class="pill"><strong>${escapeHtml(i[nameKey])}</strong> · ${i[countKey]}</span>`
+      ).join('');
+    }
+
+    function renderDocs(docs) {
+      const el = document.getElementById('docsTable');
+      if (!docs || !docs.length) {
+        el.innerHTML = '<p class="err">No documents. Upload a PDF or DOCX.</p>';
+        return;
+      }
+      el.innerHTML = `<table>
+        <thead><tr>
+          <th>File</th><th>Pages</th><th>Chunks</th><th>Indexed</th><th>Actions</th>
+        </tr></thead>
+        <tbody>${docs.map(d => `<tr>
+          <td><span class="tag">${escapeHtml(d.doc_id)}</span></td>
+          <td>${d.pages ?? '—'}</td>
+          <td>${d.chunk_count ?? '—'}</td>
+          <td>${escapeHtml((d.indexed_at || '').slice(0, 19))}</td>
+          <td>
+            <button type="button" class="danger" data-del="${escapeHtml(d.doc_id)}">Remove</button>
+          </td>
+        </tr>`).join('')}</tbody></table>`;
+
+      el.querySelectorAll('[data-del]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.getAttribute('data-del');
+          if (!confirm('Remove "' + id + '" and its embeddings from the bot?')) return;
+          try {
+            btn.disabled = true;
+            const r = await api('/admin/api/documents/' + encodeURIComponent(id) + '?delete_file=true', {
+              method: 'DELETE',
+            });
+            alert('Removed: ' + id + (r.file_deleted ? ' (file deleted)' : ' (vectors cleared)'));
+            await loadAll();
+          } catch (e) {
+            alert(e.message);
+            btn.disabled = false;
+          }
+        };
+      });
+    }
+
+    function renderChats(msgs) {
+      const el = document.getElementById('chatsTable');
+      if (!msgs || !msgs.length) {
+        el.innerHTML = '<p class="mut">No chats logged yet.</p>';
+        return;
+      }
+      el.innerHTML = `<table>
+        <thead><tr>
+          <th>When</th><th>Role</th><th>Source</th><th>Lang</th><th>Content</th>
+        </tr></thead>
+        <tbody>${msgs.map(m => `<tr>
+          <td>${escapeHtml((m.created_at || '').slice(0, 19))}</td>
+          <td>${escapeHtml(m.role)}${m.abstained ? ' · skip' : ''}</td>
+          <td>${escapeHtml(m.source || '')}</td>
+          <td>${escapeHtml(m.language || '')}</td>
+          <td>${escapeHtml((m.content || '').slice(0, 320))}</td>
+        </tr>`).join('')}</tbody></table>`;
+    }
+
+    function renderProcess(proc, analytics) {
+      const steps = (proc && proc.pipeline_steps) || [];
+      document.getElementById('processSteps').innerHTML = steps.map(s => `
+        <div class="step">
+          <div class="n">${s.step}</div>
+          <div><b>${escapeHtml(s.name)}</b><span>${escapeHtml(s.detail)}</span></div>
+        </div>`).join('') || '<p class="mut">No process data</p>';
+
+      document.getElementById('processConfig').textContent = JSON.stringify({
+        version: proc?.version,
+        chunking: proc?.chunking,
+        index: proc?.index,
+        postgres: proc?.postgres,
+        runtime: proc?.runtime,
+        chat_totals: analytics?.chat ? {
+          total_requests: analytics.chat.total_requests,
+          conversations: analytics.chat.total_conversations,
+          abstained: analytics.chat.abstained_count,
+        } : null,
+      }, null, 2);
+    }
+
+    async function loadAll() {
+      const limit = document.getElementById('chatLimit')?.value || 50;
+      const [analytics, chats, process] = await Promise.all([
+        api('/admin/api/analytics?days=14'),
+        api('/admin/api/chats?limit=' + limit),
+        api('/admin/api/process'),
+      ]);
+      lastAnalytics = analytics;
+      lastStats = analytics.index;
+
+      const chat = analytics.chat || {};
+      const idx = analytics.index || {};
+      document.getElementById('statsGrid').innerHTML = `
+        <div class="stat"><b>${chat.total_requests ?? 0}</b><span>Total requests</span></div>
+        <div class="stat"><b>${chat.total_conversations ?? 0}</b><span>Conversations</span></div>
+        <div class="stat"><b>${chat.abstained_count ?? 0}</b><span>No-answer replies</span></div>
+        <div class="stat"><b>${idx.chunk_count ?? 0}</b><span>Chunks in index</span></div>
+        <div class="stat"><b>${idx.document_count ?? 0}</b><span>Documents</span></div>
+        <div class="stat"><b>${chat.configured ? 'ON' : 'OFF'}</b><span>Chat DB</span></div>
+      `;
+
+      renderDayChart(chat.by_day || []);
+      renderPills('sourceChart', chat.by_source || [], 'source', 'count');
+      renderPills('langChart', chat.by_language || [], 'language', 'count');
+      renderDocs(idx.documents || []);
+      renderChats(chats.messages || []);
+      renderProcess(process, analytics);
     }
 
     document.getElementById('btnLogin').onclick = async () => {
@@ -230,16 +437,31 @@
       showDash(false);
     };
 
-    document.getElementById('btnRefresh').onclick = () => loadAll().catch(e => alert(e.message));
+    document.getElementById('btnRefreshAll').onclick = () => loadAll().catch(e => alert(e.message));
+    document.getElementById('btnRefreshDocs').onclick = () => loadAll().catch(e => alert(e.message));
+    document.getElementById('btnRefreshChats').onclick = () => loadAll().catch(e => alert(e.message));
+    document.getElementById('chatLimit').onchange = () => loadAll().catch(e => alert(e.message));
 
     document.getElementById('btnIngestAll').onclick = async () => {
-      if (!confirm('Re-index all files in data/?')) return;
+      if (!confirm('Re-index all files in data/? Unchanged files are skipped.')) return;
       try {
         const r = await api('/admin/api/ingest', {
           method: 'POST',
           body: JSON.stringify({ force: false }),
         });
-        alert('Ingest done. Indexed=' + r.indexed + ' skipped=' + r.skipped + ' failed=' + r.failed);
+        alert('Done. Indexed=' + r.indexed + ' skipped=' + r.skipped + ' failed=' + r.failed);
+        await loadAll();
+      } catch (e) { alert(e.message); }
+    };
+
+    document.getElementById('btnRebuild').onclick = async () => {
+      if (!confirm('FULL REBUILD: wipe index and re-embed everything?')) return;
+      try {
+        const r = await api('/admin/api/ingest', {
+          method: 'POST',
+          body: JSON.stringify({ rebuild: true }),
+        });
+        alert('Rebuild done. Indexed=' + r.indexed + ' failed=' + r.failed);
         await loadAll();
       } catch (e) { alert(e.message); }
     };
@@ -248,7 +470,7 @@
       const f = document.getElementById('fileInput').files[0];
       const msg = document.getElementById('uploadMsg');
       if (!f) { msg.className = 'err'; msg.textContent = 'Choose a file first.'; return; }
-      msg.className = ''; msg.textContent = 'Uploading…';
+      msg.className = 'mut'; msg.textContent = 'Uploading and embedding…';
       try {
         const fd = new FormData();
         fd.append('file', f);
@@ -259,9 +481,9 @@
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        const r0 = (data.results || [])[0] || {};
         msg.className = 'ok';
-        msg.textContent = 'OK: ' + (data.results?.[0]?.status || 'done') +
-          ' · chunks=' + (data.results?.[0]?.chunks ?? '?');
+        msg.textContent = 'OK · ' + (r0.status || 'done') + ' · chunks=' + (r0.chunks ?? '?');
         document.getElementById('fileInput').value = '';
         await loadAll();
       } catch (e) {
@@ -288,7 +510,6 @@
       }
     };
 
-    // Auto-login if key in session
     if (adminKey) {
       showDash(true);
       loadAll().catch(() => {

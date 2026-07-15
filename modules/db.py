@@ -284,7 +284,7 @@ def list_recent_messages(limit: int = 40) -> list[dict[str, Any]]:
             cur.execute(
                 """
                 SELECT m.id, m.role, m.content, m.abstained, m.created_at,
-                       c.session_id, c.source, c.language
+                       m.metrics, c.session_id, c.source, c.language
                 FROM messages m
                 JOIN conversations c ON c.id = m.conversation_id
                 ORDER BY m.created_at DESC
@@ -295,6 +295,12 @@ def list_recent_messages(limit: int = 40) -> list[dict[str, Any]]:
             rows = cur.fetchall() or []
         out = []
         for r in rows:
+            metrics = r.get("metrics")
+            if isinstance(metrics, str):
+                try:
+                    metrics = json.loads(metrics)
+                except Exception:  # noqa: BLE001
+                    metrics = None
             out.append(
                 {
                     "id": str(r["id"]),
@@ -307,12 +313,130 @@ def list_recent_messages(limit: int = 40) -> list[dict[str, Any]]:
                     "session_id": r.get("session_id"),
                     "source": r.get("source"),
                     "language": r.get("language"),
+                    "metrics": metrics,
                 }
             )
         return out
     except Exception as exc:  # noqa: BLE001
         logger.exception("list_recent_messages failed: %s", exc)
         return []
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def chat_analytics(days: int = 14) -> dict[str, Any]:
+    """
+    Totals + daily series for charts.
+    A 'request' = one user message (one question asked).
+    """
+    empty = {
+        "total_requests": 0,
+        "total_assistant": 0,
+        "total_conversations": 0,
+        "abstained_count": 0,
+        "by_source": [],
+        "by_day": [],
+        "by_language": [],
+        "configured": False,
+    }
+    if not ensure_schema():
+        return empty
+    conn = _get_conn()
+    if conn is None:
+        return empty
+    days = max(1, min(int(days), 90))
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM messages WHERE role = 'user'"
+            )
+            total_req = int((cur.fetchone() or {}).get("n") or 0)
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM messages WHERE role = 'assistant'"
+            )
+            total_asst = int((cur.fetchone() or {}).get("n") or 0)
+            cur.execute("SELECT COUNT(*) AS n FROM conversations")
+            total_conv = int((cur.fetchone() or {}).get("n") or 0)
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM messages
+                WHERE role = 'assistant' AND abstained = TRUE
+                """
+            )
+            abstained = int((cur.fetchone() or {}).get("n") or 0)
+
+            cur.execute(
+                """
+                SELECT c.source AS source, COUNT(*) AS n
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.role = 'user'
+                GROUP BY c.source
+                ORDER BY n DESC
+                """
+            )
+            by_source = [
+                {"source": r["source"] or "unknown", "count": int(r["n"])}
+                for r in (cur.fetchall() or [])
+            ]
+
+            cur.execute(
+                """
+                SELECT c.language AS language, COUNT(*) AS n
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.role = 'user'
+                GROUP BY c.language
+                ORDER BY n DESC
+                """
+            )
+            by_language = [
+                {"language": r["language"] or "en", "count": int(r["n"])}
+                for r in (cur.fetchall() or [])
+            ]
+
+            cur.execute(
+                """
+                SELECT DATE(m.created_at) AS day, COUNT(*) AS n
+                FROM messages m
+                WHERE m.role = 'user'
+                  AND m.created_at >= (NOW() AT TIME ZONE 'UTC') - (%s || ' days')::interval
+                GROUP BY DATE(m.created_at)
+                ORDER BY day ASC
+                """,
+                (str(days),),
+            )
+            by_day = [
+                {
+                    "day": str(r["day"]),
+                    "count": int(r["n"]),
+                }
+                for r in (cur.fetchall() or [])
+            ]
+
+        return {
+            "configured": True,
+            "total_requests": total_req,
+            "total_assistant": total_asst,
+            "total_conversations": total_conv,
+            "abstained_count": abstained,
+            "answer_rate": round(
+                (total_asst - abstained) / total_asst, 3
+            )
+            if total_asst
+            else None,
+            "by_source": by_source,
+            "by_language": by_language,
+            "by_day": by_day,
+            "days": days,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("chat_analytics failed: %s", exc)
+        empty["error"] = str(exc)
+        return empty
     finally:
         try:
             conn.close()

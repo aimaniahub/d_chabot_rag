@@ -367,3 +367,101 @@ async def admin_upload(
         return _do_upload(file)
     finally:
         await file.close()
+
+
+@app.delete("/admin/api/documents/{doc_id}")
+def admin_delete_document(
+    doc_id: str,
+    delete_file: bool = True,
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Remove embeddings (+ optional disk file) for one document."""
+    from modules.ingest import delete_document
+
+    result = delete_document(doc_id, delete_file=delete_file)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "delete failed")
+    return result
+
+
+@app.get("/admin/api/analytics")
+def admin_analytics(
+    days: int = 14,
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    from modules.db import chat_analytics
+    from modules.ingest import get_index_stats
+    from config import OPENROUTER_MODELS, EMBEDDING_MODEL
+
+    _bootstrap_runtime()
+    st = get_index_stats()
+    analytics = chat_analytics(days=days)
+    return {
+        "chat": analytics,
+        "index": {
+            "chunk_count": st.get("chunk_count"),
+            "document_count": len(st.get("documents") or []),
+            "documents": st.get("documents") or [],
+            "embedding_model": st.get("embedding_model") or EMBEDDING_MODEL,
+        },
+        "process": {
+            "llm_provider": "openrouter",
+            "llm_models": OPENROUTER_MODELS,
+            "embedding_model": EMBEDDING_MODEL,
+            "pipeline": [
+                "1. User question (site or admin)",
+                "2. Embed question (local fastembed)",
+                "3. Retrieve top chunks from Chroma",
+                "4. Build plain-text prompt with context",
+                "5. OpenRouter free model (rotate on fail)",
+                "6. Save Q&A to Postgres",
+                "7. Return answer to client",
+            ],
+            "runtime": runtime_info(),
+            "version": "2.3.1",
+        },
+    }
+
+
+@app.get("/admin/api/process")
+def admin_process(_key: str = Depends(require_admin_key)) -> dict[str, Any]:
+    """Bot / pipeline details for monitoring tab."""
+    from config import (
+        EMBEDDING_MODEL,
+        MIN_SCORE,
+        OPENROUTER_MODELS,
+        TOP_K,
+        CHUNK_SIZE,
+        CHUNK_OVERLAP,
+    )
+    from modules.db import db_health
+    from modules.ingest import get_index_stats
+
+    st = get_index_stats()
+    return {
+        "status": "running",
+        "version": "2.3.1",
+        "pipeline_steps": [
+            {"step": 1, "name": "Receive question", "detail": "POST /chat with API_KEY"},
+            {"step": 2, "name": "Embed query", "detail": f"Model: {EMBEDDING_MODEL}"},
+            {
+                "step": 3,
+                "name": "Retrieve",
+                "detail": f"Chroma top_k={TOP_K}, min_score={MIN_SCORE}",
+            },
+            {
+                "step": 4,
+                "name": "Generate",
+                "detail": "OpenRouter models: " + ", ".join(OPENROUTER_MODELS),
+            },
+            {"step": 5, "name": "Log", "detail": "Postgres conversations + messages"},
+            {"step": 6, "name": "Respond", "detail": "Plain text header + bullets"},
+        ],
+        "chunking": {"chunk_size": CHUNK_SIZE, "chunk_overlap": CHUNK_OVERLAP},
+        "index": {
+            "chunks": st.get("chunk_count"),
+            "documents": len(st.get("documents") or []),
+        },
+        "postgres": db_health(),
+        "runtime": runtime_info(),
+    }

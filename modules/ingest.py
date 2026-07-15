@@ -258,3 +258,71 @@ def get_index_stats() -> dict:
         "data_dir": str(DATA_DIR),
         "chroma_dir": str(CHROMA_DIR),
     }
+
+
+def delete_document(
+    doc_id: str,
+    *,
+    delete_file: bool = True,
+    store: VectorStore | None = None,
+) -> dict:
+    """
+    Remove a document's vectors from Chroma, drop manifest entry,
+    and optionally delete the file under DATA_DIR.
+    """
+    ensure_dirs()
+    doc_id = (doc_id or "").strip()
+    if not doc_id or "/" in doc_id or "\\" in doc_id or ".." in doc_id:
+        return {"ok": False, "error": "invalid doc_id"}
+
+    store = store or VectorStore()
+    manifest = load_manifest()
+    meta = (manifest.get("documents") or {}).get(doc_id)
+
+    store.delete_doc(doc_id)
+    remove_document(manifest, doc_id)
+    save_manifest(manifest)
+
+    file_deleted = False
+    path_tried = None
+    if delete_file:
+        # Prefer path from manifest; fall back to data_dir / doc_id
+        candidates = []
+        if meta and meta.get("path"):
+            candidates.append(Path(meta["path"]))
+        candidates.append(DATA_DIR / doc_id)
+        for p in candidates:
+            path_tried = str(p)
+            try:
+                if p.exists() and p.is_file() and p.resolve().parent == DATA_DIR.resolve():
+                    p.unlink()
+                    file_deleted = True
+                    break
+                if p.exists() and p.is_file():
+                    # still allow delete if under DATA_DIR
+                    try:
+                        p.resolve().relative_to(DATA_DIR.resolve())
+                        p.unlink()
+                        file_deleted = True
+                        break
+                    except ValueError:
+                        continue
+            except OSError as exc:
+                return {
+                    "ok": True,
+                    "doc_id": doc_id,
+                    "vectors_removed": True,
+                    "file_deleted": False,
+                    "path": path_tried,
+                    "warning": str(exc),
+                }
+
+    return {
+        "ok": True,
+        "doc_id": doc_id,
+        "vectors_removed": True,
+        "file_deleted": file_deleted,
+        "path": path_tried,
+        "had_manifest": bool(meta),
+        "chunk_count_after": store.count(),
+    }
