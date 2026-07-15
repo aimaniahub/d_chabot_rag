@@ -9,14 +9,35 @@ Deploy your **frontend** separately (e.g. Vercel) and call this API.
 
 ## Why not Vercel for this backend?
 
-Vercel is ideal for Next.js frontends. This service needs:
+Vercel is ideal for Next.js frontends. This Python RAG service needs:
 
 - long-running process
-- local/persistent vector storage
+- **writable + persistent** vector storage
 - embedding model files
-- multi-MB Docker image
+- multi-MB image / deps (Chroma, ONNX)
 
-Use **Railway (or any Docker host)** for the API; **Vercel** for the UI.
+### What goes wrong on Vercel (serverless)
+
+Vercel packages code under `/var/task` which is **read-only**. Only `/tmp` is writable.
+
+If storage points at `/var/task/storage/chroma` you get:
+
+```text
+OSError: [Errno 30] Read-only file system: '/var/task/storage/chroma'
+→ FUNCTION_INVOCATION_FAILED / "serverless function crashed"
+```
+
+This repo auto-detects Vercel/Lambda and uses:
+
+| Path | Location on Vercel |
+|------|--------------------|
+| Index / Chroma | `/tmp/pdf_rag/storage` |
+| Uploads | `/tmp/pdf_rag/data` |
+| Model cache | `/tmp/pdf_rag/.cache` |
+| Seed PDFs | copied from `/var/task/data` → `/tmp` |
+
+**Limits still remain:** `/tmp` is wiped on cold starts, size/time limits apply, and heavy models may still timeout.  
+**Recommended production:** Docker on **Railway** (or similar). Use **Vercel only for the frontend**.
 
 ---
 

@@ -1,24 +1,71 @@
 """Central configuration for production PDF RAG backend."""
 from __future__ import annotations
 
+import logging
 import os
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Paths
+logger = logging.getLogger("pdf_rag.config")
+
+# ---------------------------------------------------------------------------
+# Environment detection
+# Vercel / AWS Lambda: package dir is read-only; only /tmp is writable.
+# ---------------------------------------------------------------------------
+IS_VERCEL = os.getenv("VERCEL", "").lower() in ("1", "true") or bool(
+    os.getenv("VERCEL_ENV")
+)
+IS_LAMBDA = bool(
+    os.getenv("AWS_LAMBDA_FUNCTION_NAME") or os.getenv("AWS_EXECUTION_ENV")
+)
+IS_SERVERLESS = IS_VERCEL or IS_LAMBDA or os.getenv("SERVERLESS", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parent
-DATA_DIR = Path(os.getenv("DATA_DIR", PROJECT_ROOT / "data"))
-STORAGE_DIR = Path(os.getenv("STORAGE_DIR", PROJECT_ROOT / "storage"))
+
+
+def _runtime_root() -> Path:
+    """Root for writable paths (index, uploads, caches)."""
+    override = os.getenv("RUNTIME_ROOT") or os.getenv("WRITABLE_ROOT")
+    if override:
+        return Path(override)
+    if IS_SERVERLESS:
+        return Path("/tmp/pdf_rag")
+    return PROJECT_ROOT
+
+
+RUNTIME_ROOT = _runtime_root()
+
+# Seed PDFs shipped with the repo (may be read-only on Vercel)
+SEED_DATA_DIR = Path(os.getenv("SEED_DATA_DIR", PROJECT_ROOT / "data"))
+
+# Writable data dir (uploads + copies of seeds on serverless)
+DATA_DIR = Path(os.getenv("DATA_DIR", RUNTIME_ROOT / "data"))
+STORAGE_DIR = Path(os.getenv("STORAGE_DIR", RUNTIME_ROOT / "storage"))
 CHROMA_DIR = STORAGE_DIR / "chroma"
 MANIFEST_PATH = STORAGE_DIR / "manifest.json"
-EVAL_REPORTS_DIR = Path(os.getenv("EVAL_REPORTS_DIR", PROJECT_ROOT / "eval_reports"))
+EVAL_REPORTS_DIR = Path(
+    os.getenv("EVAL_REPORTS_DIR", RUNTIME_ROOT / "eval_reports")
+)
+
+# Caches must also be under a writable path on serverless
+if IS_SERVERLESS:
+    _cache = RUNTIME_ROOT / ".cache"
+    os.environ.setdefault("HF_HOME", str(_cache / "huggingface"))
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(_cache / "huggingface"))
+    os.environ.setdefault("FASTEMBED_CACHE_PATH", str(_cache / "fastembed"))
+    os.environ.setdefault("XDG_CACHE_HOME", str(_cache))
+    os.environ.setdefault("TRANSFORMERS_CACHE", str(_cache / "transformers"))
 
 # Auth / models
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-# fastembed model (no torch). Aliases resolved in modules.embedder
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 )
@@ -42,7 +89,7 @@ ABSTAIN_MESSAGE = "I could not find the answer in the provided document."
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
 LLM_RETRY_BACKOFF_SEC = float(os.getenv("LLM_RETRY_BACKOFF_SEC", "1.5"))
 
-# Eval gates (predeploy)
+# Eval gates
 GATE_HIT_AT_K = float(os.getenv("GATE_HIT_AT_K", "0.70"))
 GATE_P95_LATENCY_MS = float(os.getenv("GATE_P95_LATENCY_MS", "15000"))
 
@@ -51,8 +98,7 @@ API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("PORT") or os.getenv("API_PORT", "8000"))
 UI_PORT = int(os.getenv("UI_PORT", "8501"))
 
-# CORS — comma-separated origins for separate frontend (e.g. Vercel)
-# Use * for open dev; set explicit origins in production
+# CORS
 _CORS = os.getenv("CORS_ORIGINS", "*").strip()
 CORS_ORIGINS: list[str] = (
     ["*"]
@@ -60,8 +106,9 @@ CORS_ORIGINS: list[str] = (
     else [o.strip() for o in _CORS.split(",") if o.strip()]
 )
 
-# Optional auto-ingest of data/*.pdf on API startup (Docker/Railway)
-AUTO_INGEST_ON_START = os.getenv("AUTO_INGEST_ON_START", "false").lower() in (
+# Auto-ingest: default ON for serverless (ephemeral /tmp index each cold start)
+_auto_default = "true" if IS_SERVERLESS else "false"
+AUTO_INGEST_ON_START = os.getenv("AUTO_INGEST_ON_START", _auto_default).lower() in (
     "1",
     "true",
     "yes",
@@ -69,8 +116,49 @@ AUTO_INGEST_ON_START = os.getenv("AUTO_INGEST_ON_START", "false").lower() in (
 
 
 def ensure_dirs() -> None:
-    """Create storage and data directories if missing."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    CHROMA_DIR.mkdir(parents=True, exist_ok=True)
-    EVAL_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    """Create writable runtime directories. Safe on read-only package roots."""
+    for path in (DATA_DIR, STORAGE_DIR, CHROMA_DIR, EVAL_REPORTS_DIR):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            # Never crash the process; log and continue
+            logger.error("Could not create directory %s: %s", path, exc)
+            if not IS_SERVERLESS:
+                raise
+
+
+def sync_seed_pdfs() -> int:
+    """
+    Copy bundled data/*.pdf into writable DATA_DIR when needed.
+    On Vercel, seeds live under /var/task/data (read-only); index/uploads use /tmp.
+    """
+    ensure_dirs()
+    if not SEED_DATA_DIR.exists():
+        return 0
+    if SEED_DATA_DIR.resolve() == DATA_DIR.resolve():
+        return 0
+
+    copied = 0
+    for src in SEED_DATA_DIR.glob("*.pdf"):
+        dest = DATA_DIR / src.name
+        try:
+            if not dest.exists() or dest.stat().st_size != src.stat().st_size:
+                shutil.copy2(src, dest)
+                copied += 1
+        except OSError as exc:
+            logger.warning("Could not copy seed PDF %s: %s", src.name, exc)
+    return copied
+
+
+def runtime_info() -> dict:
+    return {
+        "is_serverless": IS_SERVERLESS,
+        "is_vercel": IS_VERCEL,
+        "is_lambda": IS_LAMBDA,
+        "project_root": str(PROJECT_ROOT),
+        "runtime_root": str(RUNTIME_ROOT),
+        "data_dir": str(DATA_DIR),
+        "seed_data_dir": str(SEED_DATA_DIR),
+        "storage_dir": str(STORAGE_DIR),
+        "chroma_dir": str(CHROMA_DIR),
+    }

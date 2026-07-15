@@ -4,6 +4,7 @@ PDF RAG Backend API
 Designed to be consumed by any frontend (Next.js/Vercel, React, mobile, etc.).
 
   GET  /health
+  GET  /ready
   GET  /stats
   POST /ingest
   POST /ingest/upload
@@ -25,18 +26,33 @@ from config import (
     AUTO_INGEST_ON_START,
     CORS_ORIGINS,
     DATA_DIR,
+    IS_SERVERLESS,
     MIN_SCORE,
     TOP_K,
     ensure_dirs,
+    runtime_info,
+    sync_seed_pdfs,
 )
 
 logger = logging.getLogger("pdf_rag.api")
 logging.basicConfig(level=logging.INFO)
 
 
+def _bootstrap_runtime() -> None:
+    """Writable dirs + seed PDFs. Must never raise on serverless cold start."""
+    try:
+        ensure_dirs()
+        n = sync_seed_pdfs()
+        if n:
+            logger.info("Synced %s seed PDF(s) into %s", n, DATA_DIR)
+        logger.info("Runtime paths: %s", runtime_info())
+    except Exception:  # noqa: BLE001
+        logger.exception("Runtime bootstrap failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ensure_dirs()
+    _bootstrap_runtime()
     if AUTO_INGEST_ON_START:
         try:
             from modules.ingest import ingest_paths
@@ -59,11 +75,10 @@ app = FastAPI(
         "Backend RAG service: ingest PDFs, retrieve grounded context, "
         "answer via Gemini. Connect any frontend via HTTP/JSON."
     ),
-    version="2.1.0",
+    version="2.1.1",
     lifespan=lifespan,
 )
 
-# When allow_origins=["*"], credentials must be false (browser CORS rules).
 _allow_credentials = CORS_ORIGINS != ["*"]
 app.add_middleware(
     CORSMiddleware,
@@ -97,14 +112,19 @@ class IngestRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    """Liveness for Railway / Docker healthchecks."""
-    return {"status": "ok", "service": "pdf-rag-api"}
+    """Liveness — no disk writes required."""
+    return {
+        "status": "ok",
+        "service": "pdf-rag-api",
+        "serverless": IS_SERVERLESS,
+    }
 
 
 @app.get("/ready")
 def ready() -> dict[str, Any]:
-    """Readiness: index reachable."""
+    """Readiness: writable storage + index reachable."""
     try:
+        _bootstrap_runtime()
         from modules.ingest import get_index_stats
 
         st = get_index_stats()
@@ -112,6 +132,7 @@ def ready() -> dict[str, Any]:
             "status": "ready",
             "chunk_count": st["chunk_count"],
             "documents": len(st.get("documents") or []),
+            "paths": runtime_info(),
         }
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -119,13 +140,17 @@ def ready() -> dict[str, Any]:
 
 @app.get("/stats")
 def stats() -> dict[str, Any]:
+    _bootstrap_runtime()
     from modules.ingest import get_index_stats
 
-    return get_index_stats()
+    out = get_index_stats()
+    out["runtime"] = runtime_info()
+    return out
 
 
 @app.post("/ingest")
 def ingest(body: IngestRequest) -> dict[str, Any]:
+    _bootstrap_runtime()
     from modules.ingest import ingest_paths
 
     paths = [Path(body.file)] if body.file else None
@@ -135,17 +160,22 @@ def ingest(body: IngestRequest) -> dict[str, Any]:
 
 @app.post("/ingest/upload")
 async def ingest_upload(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Upload a PDF into data/ and index it."""
+    """Upload a PDF into writable data dir and index it."""
+    _bootstrap_runtime()
     from modules.ingest import ingest_paths
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
 
-    ensure_dirs()
     dest = DATA_DIR / Path(file.filename).name
     try:
         with dest.open("wb") as out:
             shutil.copyfileobj(file.file, out)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cannot write upload to {dest}: {exc}",
+        ) from exc
     finally:
         await file.close()
 
@@ -155,10 +185,24 @@ async def ingest_upload(file: UploadFile = File(...)) -> dict[str, Any]:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(body: ChatRequest) -> dict[str, Any]:
+    _bootstrap_runtime()
     from modules.chat import ChatService
-    from modules.ingest import get_index_stats
+    from modules.ingest import get_index_stats, ingest_paths
 
     st = get_index_stats()
+    # Serverless cold start: auto-build index if empty
+    if st["chunk_count"] == 0:
+        try:
+            sync_seed_pdfs()
+            ingest_paths()
+            st = get_index_stats()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Lazy ingest failed")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Index empty and ingest failed: {exc}",
+            ) from exc
+
     if st["chunk_count"] == 0:
         raise HTTPException(
             status_code=400,
@@ -185,7 +229,7 @@ def chat(body: ChatRequest) -> dict[str, Any]:
 
 
 @app.get("/")
-def root() -> dict[str, str]:
+def root() -> dict[str, Any]:
     return {
         "message": "PDF RAG API",
         "docs": "/docs",
@@ -194,4 +238,11 @@ def root() -> dict[str, str]:
         "chat": "POST /chat",
         "ingest": "POST /ingest",
         "upload": "POST /ingest/upload",
+        "serverless": IS_SERVERLESS,
+        "note": (
+            "On Vercel, storage is ephemeral under /tmp. "
+            "For persistent production RAG, use Docker on Railway."
+            if IS_SERVERLESS
+            else "Long-running server mode."
+        ),
     }
