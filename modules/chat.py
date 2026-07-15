@@ -17,6 +17,20 @@ from modules.metrics import (
 from modules.prompt_builder import build_prompt, sources_payload
 from modules.retriever import Retriever
 from modules.vector_store import RetrievedChunk, VectorStore
+import re
+
+
+def _plain_text(text: str) -> str:
+    """Strip markdown special chars users don't want (* # ` ** etc.)."""
+    if not text:
+        return text
+    t = text.replace("\r\n", "\n")
+    t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
+    t = re.sub(r"\*(.+?)\*", r"\1", t)
+    t = re.sub(r"`+", "", t)
+    t = re.sub(r"^#{1,6}\s*", "", t, flags=re.MULTILINE)
+    t = t.replace("*", "")
+    return t.strip()
 
 
 @dataclass
@@ -120,7 +134,7 @@ class ChatService:
             metrics.tokens.completion_tokens = llm_result.completion_tokens
             metrics.tokens.total_tokens = llm_result.total_tokens
 
-            answer = llm_result.text
+            answer = _plain_text(llm_result.text)
             abstained = len(hits) == 0 or "could not find the answer" in answer.lower()
 
         timings.total_ms = total_t["ms"]

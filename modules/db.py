@@ -253,9 +253,66 @@ def db_health() -> dict[str, Any]:
             cur.execute("SELECT COUNT(*) AS n FROM messages")
             row = cur.fetchone()
             n = int(row["n"]) if row else 0
-        return {"configured": True, "ok": True, "message_count": n}
+            cur.execute("SELECT COUNT(*) AS n FROM conversations")
+            row2 = cur.fetchone()
+            c = int(row2["n"]) if row2 else 0
+        return {
+            "configured": True,
+            "ok": True,
+            "message_count": n,
+            "conversation_count": c,
+        }
     except Exception as exc:  # noqa: BLE001
         return {"configured": True, "ok": False, "detail": str(exc)}
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def list_recent_messages(limit: int = 40) -> list[dict[str, Any]]:
+    """Recent chat turns for admin dashboard."""
+    if not ensure_schema():
+        return []
+    conn = _get_conn()
+    if conn is None:
+        return []
+    limit = max(1, min(int(limit), 200))
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT m.id, m.role, m.content, m.abstained, m.created_at,
+                       c.session_id, c.source, c.language
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                ORDER BY m.created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall() or []
+        out = []
+        for r in rows:
+            out.append(
+                {
+                    "id": str(r["id"]),
+                    "role": r["role"],
+                    "content": (r["content"] or "")[:2000],
+                    "abstained": bool(r.get("abstained")),
+                    "created_at": r["created_at"].isoformat()
+                    if r.get("created_at")
+                    else None,
+                    "session_id": r.get("session_id"),
+                    "source": r.get("source"),
+                    "language": r.get("language"),
+                }
+            )
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("list_recent_messages failed: %s", exc)
+        return []
     finally:
         try:
             conn.close()

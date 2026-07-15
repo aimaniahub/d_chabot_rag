@@ -1,12 +1,17 @@
 """
-PDF RAG Backend API — Railway production
+Darvi RAG API — secured
 
+Public:
   GET  /health
-  GET  /ready
-  GET  /stats
-  POST /ingest
-  POST /ingest/upload   (PDF or DOCX)
-  POST /chat            (RAG + optional Postgres log)
+  GET  /admin          (UI; actions need ADMIN_KEY)
+
+Protected (X-API-Key: API_KEY or ADMIN_KEY):
+  POST /chat
+  GET  /ready, /stats
+
+Admin only (X-API-Key: ADMIN_KEY):
+  POST /ingest, /ingest/upload
+  GET/POST /admin/api/*
 """
 from __future__ import annotations
 
@@ -17,14 +22,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import (
     AUTO_INGEST_ON_START,
     CORS_ORIGINS,
     DATA_DIR,
+    DOCS_ENABLED,
     IS_SERVERLESS,
     MIN_SCORE,
     TOP_K,
@@ -32,9 +40,12 @@ from config import (
     runtime_info,
     sync_seed_pdfs,
 )
+from modules.auth import require_admin_key, require_api_key
 
 logger = logging.getLogger("pdf_rag.api")
 logging.basicConfig(level=logging.INFO)
+
+ADMIN_DIR = Path(__file__).resolve().parent / "admin_static"
 
 
 def _bootstrap_runtime() -> None:
@@ -42,8 +53,7 @@ def _bootstrap_runtime() -> None:
         ensure_dirs()
         n = sync_seed_pdfs()
         if n:
-            logger.info("Synced %s seed PDF(s) into %s", n, DATA_DIR)
-        # also copy docx seeds if any
+            logger.info("Synced %s seed file(s) into %s", n, DATA_DIR)
         from config import SEED_DATA_DIR
 
         if SEED_DATA_DIR.exists() and SEED_DATA_DIR.resolve() != DATA_DIR.resolve():
@@ -54,7 +64,6 @@ def _bootstrap_runtime() -> None:
                         shutil.copy2(src, dest)
                 except OSError:
                     pass
-        logger.info("Runtime paths: %s", runtime_info())
     except Exception:  # noqa: BLE001
         logger.exception("Runtime bootstrap failed")
 
@@ -66,16 +75,15 @@ def _run_auto_ingest_background() -> None:
         try:
             from modules.ingest import ingest_paths
 
-            logger.info("Background auto-ingest starting...")
             report = ingest_paths()
             logger.info(
-                "Auto-ingest finished: indexed=%s skipped=%s failed=%s",
+                "Auto-ingest: indexed=%s skipped=%s failed=%s",
                 report.indexed,
                 report.skipped,
                 report.failed,
             )
         except Exception:  # noqa: BLE001
-            logger.exception("Auto-ingest on startup failed")
+            logger.exception("Auto-ingest failed")
 
     threading.Thread(target=_job, name="auto-ingest", daemon=True).start()
 
@@ -89,17 +97,20 @@ async def lifespan(app: FastAPI):
         if is_db_configured():
             ensure_schema()
     except Exception:  # noqa: BLE001
-        logger.exception("DB schema bootstrap skipped/failed")
+        logger.exception("DB bootstrap failed")
     if AUTO_INGEST_ON_START:
         _run_auto_ingest_background()
     yield
 
 
 app = FastAPI(
-    title="PDF RAG API",
-    description="Darvi / PDF RAG: ingest PDF+DOCX, chat with sources, log to Postgres.",
-    version="2.2.0",
+    title="Darvi RAG API",
+    description="Secured PDF/DOCX RAG. Use /admin for monitoring & uploads.",
+    version="2.3.0",
     lifespan=lifespan,
+    docs_url="/docs" if DOCS_ENABLED else None,
+    redoc_url="/redoc" if DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if DOCS_ENABLED else None,
 )
 
 _allow_credentials = CORS_ORIGINS != ["*"]
@@ -110,6 +121,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if ADMIN_DIR.is_dir():
+    app.mount("/admin/assets", StaticFiles(directory=str(ADMIN_DIR)), name="admin_assets")
 
 
 class ChatRequest(BaseModel):
@@ -138,100 +152,7 @@ class IngestRequest(BaseModel):
     file: Optional[str] = None
 
 
-@app.get("/health")
-def health() -> dict[str, Any]:
-    out: dict[str, Any] = {
-        "status": "ok",
-        "service": "pdf-rag-api",
-        "serverless": IS_SERVERLESS,
-        "version": "2.2.0",
-    }
-    try:
-        from modules.db import db_health
-
-        out["postgres"] = db_health()
-    except Exception as exc:  # noqa: BLE001
-        out["postgres"] = {"ok": False, "detail": str(exc)}
-    return out
-
-
-@app.get("/ready")
-def ready() -> dict[str, Any]:
-    try:
-        _bootstrap_runtime()
-        from modules.ingest import get_index_stats
-
-        st = get_index_stats()
-        from modules.db import db_health
-
-        return {
-            "status": "ready",
-            "chunk_count": st["chunk_count"],
-            "documents": len(st.get("documents") or []),
-            "paths": runtime_info(),
-            "postgres": db_health(),
-        }
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.get("/stats")
-def stats() -> dict[str, Any]:
-    _bootstrap_runtime()
-    from modules.ingest import get_index_stats
-
-    out = get_index_stats()
-    out["runtime"] = runtime_info()
-    try:
-        from modules.db import db_health
-
-        out["postgres"] = db_health()
-    except Exception:  # noqa: BLE001
-        pass
-    return out
-
-
-@app.post("/ingest")
-def ingest(body: IngestRequest) -> dict[str, Any]:
-    _bootstrap_runtime()
-    from modules.ingest import ingest_paths
-
-    paths = [Path(body.file)] if body.file else None
-    report = ingest_paths(paths=paths, rebuild=body.rebuild, force=body.force)
-    return report.to_dict()
-
-
-@app.post("/ingest/upload")
-async def ingest_upload(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Upload a PDF or DOCX and index it."""
-    _bootstrap_runtime()
-    from modules.ingest import ingest_paths
-
-    name = (file.filename or "").strip()
-    lower = name.lower()
-    if not name or not (lower.endswith(".pdf") or lower.endswith(".docx")):
-        raise HTTPException(
-            status_code=400, detail="Only PDF and DOCX uploads are supported"
-        )
-
-    dest = DATA_DIR / Path(name).name
-    try:
-        with dest.open("wb") as out:
-            shutil.copyfileobj(file.file, out)
-    except OSError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Cannot write upload to {dest}: {exc}",
-        ) from exc
-    finally:
-        await file.close()
-
-    report = ingest_paths(paths=[dest], force=True)
-    return {"saved_to": str(dest), **report.to_dict()}
-
-
-@app.post("/chat", response_model=ChatResponse)
-def chat(body: ChatRequest) -> dict[str, Any]:
+def _do_chat(body: ChatRequest) -> dict[str, Any]:
     _bootstrap_runtime()
     from modules.chat import ChatService
     from modules.ingest import get_index_stats, ingest_paths
@@ -243,22 +164,15 @@ def chat(body: ChatRequest) -> dict[str, Any]:
             ingest_paths()
             st = get_index_stats()
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Lazy ingest failed")
-            raise HTTPException(
-                status_code=503,
-                detail=f"Index empty and ingest failed: {exc}",
-            ) from exc
+            raise HTTPException(status_code=503, detail=f"Index empty: {exc}") from exc
 
     if st["chunk_count"] == 0:
         raise HTTPException(
             status_code=400,
-            detail="Index empty. POST /ingest or upload a PDF/DOCX first.",
+            detail="Index empty. Upload a PDF/DOCX from /admin first.",
         )
 
     session_id = (body.session_id or "").strip() or str(uuid.uuid4())
-    source = (body.source or "api").strip() or "api"
-    language = (body.language or "en").strip() or "en"
-
     try:
         service = ChatService(
             top_k=body.top_k or TOP_K,
@@ -271,8 +185,8 @@ def chat(body: ChatRequest) -> dict[str, Any]:
             min_score=body.min_score,
             doc_id=body.doc_id,
             session_id=session_id,
-            source=source,
-            language=language,
+            source=(body.source or "api").strip() or "api",
+            language=(body.language or "en").strip() or "en",
             persist=True,
         )
         return resp.to_dict()
@@ -282,16 +196,174 @@ def chat(body: ChatRequest) -> dict[str, Any]:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+def _do_upload(file: UploadFile) -> dict[str, Any]:
+    _bootstrap_runtime()
+    from modules.ingest import ingest_paths
+
+    name = (file.filename or "").strip()
+    lower = name.lower()
+    if not name or not (lower.endswith(".pdf") or lower.endswith(".docx")):
+        raise HTTPException(status_code=400, detail="Only PDF and DOCX allowed")
+
+    dest = DATA_DIR / Path(name).name
+    try:
+        with dest.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        # caller may await close
+        pass
+
+    report = ingest_paths(paths=[dest], force=True)
+    return {"saved_to": str(dest), **report.to_dict()}
+
+
+# ----- Public -----
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    return {"status": "ok", "service": "darvi-rag-api", "version": "2.3.0"}
+
+
 @app.get("/")
-def root() -> dict[str, Any]:
+def root() -> dict[str, str]:
     return {
-        "message": "PDF RAG API",
-        "version": "2.2.0",
-        "docs": "/docs",
+        "service": "Darvi RAG API",
         "health": "/health",
-        "ready": "/ready",
-        "chat": "POST /chat",
-        "ingest": "POST /ingest",
-        "upload": "POST /ingest/upload (pdf|docx)",
-        "serverless": IS_SERVERLESS,
+        "admin": "/admin",
+        "note": "API requires X-API-Key. Manage uploads at /admin",
     }
+
+
+@app.get("/admin")
+@app.get("/admin/")
+def admin_page() -> FileResponse:
+    index = ADMIN_DIR / "index.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="Admin UI missing")
+    return FileResponse(index)
+
+
+# ----- Chat (API key) -----
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(
+    body: ChatRequest,
+    _key: str = Depends(require_api_key),
+) -> dict[str, Any]:
+    return _do_chat(body)
+
+
+@app.get("/ready")
+def ready(_key: str = Depends(require_api_key)) -> dict[str, Any]:
+    _bootstrap_runtime()
+    from modules.db import db_health
+    from modules.ingest import get_index_stats
+
+    st = get_index_stats()
+    return {
+        "status": "ready",
+        "chunk_count": st["chunk_count"],
+        "documents": len(st.get("documents") or []),
+        "postgres": db_health(),
+        "paths": runtime_info(),
+    }
+
+
+@app.get("/stats")
+def stats(_key: str = Depends(require_api_key)) -> dict[str, Any]:
+    _bootstrap_runtime()
+    from modules.db import db_health
+    from modules.ingest import get_index_stats
+
+    out = get_index_stats()
+    out["postgres"] = db_health()
+    out["runtime"] = runtime_info()
+    return out
+
+
+# ----- Ingest (admin key) -----
+
+
+@app.post("/ingest")
+def ingest(
+    body: IngestRequest,
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    _bootstrap_runtime()
+    from modules.ingest import ingest_paths
+
+    paths = [Path(body.file)] if body.file else None
+    return ingest_paths(paths=paths, rebuild=body.rebuild, force=body.force).to_dict()
+
+
+@app.post("/ingest/upload")
+async def ingest_upload(
+    file: UploadFile = File(...),
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    try:
+        result = _do_upload(file)
+    finally:
+        await file.close()
+    return result
+
+
+# ----- Admin JSON API (same admin key; used by /admin UI) -----
+
+
+@app.get("/admin/api/stats")
+def admin_stats(_key: str = Depends(require_admin_key)) -> dict[str, Any]:
+    _bootstrap_runtime()
+    from modules.db import db_health
+    from modules.ingest import get_index_stats
+
+    out = get_index_stats()
+    out["postgres"] = db_health()
+    out["runtime"] = runtime_info()
+    return out
+
+
+@app.get("/admin/api/chats")
+def admin_chats(
+    limit: int = 40,
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    from modules.db import list_recent_messages
+
+    return {"messages": list_recent_messages(limit=limit)}
+
+
+@app.post("/admin/api/chat")
+def admin_chat(
+    body: ChatRequest,
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    body.source = body.source or "admin-ui"
+    return _do_chat(body)
+
+
+@app.post("/admin/api/ingest")
+def admin_ingest(
+    body: IngestRequest,
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    _bootstrap_runtime()
+    from modules.ingest import ingest_paths
+
+    paths = [Path(body.file)] if body.file else None
+    return ingest_paths(paths=paths, rebuild=body.rebuild, force=body.force).to_dict()
+
+
+@app.post("/admin/api/upload")
+async def admin_upload(
+    file: UploadFile = File(...),
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    try:
+        return _do_upload(file)
+    finally:
+        await file.close()

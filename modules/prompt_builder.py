@@ -1,4 +1,4 @@
-"""Grounded prompt construction — strict systematic answer format."""
+"""Grounded prompt — plain text only (no markdown * or #)."""
 from __future__ import annotations
 
 from typing import Sequence
@@ -9,7 +9,6 @@ from modules.vector_store import RetrievedChunk
 
 
 def format_context(hits: Sequence[RetrievedChunk], max_chars: int = MAX_CONTEXT_CHARS) -> str:
-    """Pack ranked chunks as numbered sources under a char budget."""
     if not hits:
         return "(no relevant context retrieved)"
 
@@ -47,9 +46,9 @@ def format_history(history: Sequence[dict] | None, max_turns: int = MAX_HISTORY_
 def _language_instruction(language: str | None) -> str:
     lang = (language or "en").lower()
     if lang in ("kn", "kannada"):
-        return "Write the entire answer in Kannada (ಕನ್ನಡ)."
+        return "Write the entire answer in Kannada."
     if lang in ("hi", "hindi"):
-        return "Write the entire answer in Hindi (हिंदी)."
+        return "Write the entire answer in Hindi."
     return "Write the entire answer in clear English."
 
 
@@ -61,7 +60,6 @@ def build_prompt(
     max_context_chars: int = MAX_CONTEXT_CHARS,
     language: str | None = "en",
 ) -> str:
-    """Strict Darvi answer format: header + bullets/para + closing ask."""
     if isinstance(context, str):
         context_block = context
     else:
@@ -73,26 +71,26 @@ def build_prompt(
 
     return f"""You are Darvi Assistant for Darvi Group (plants, horticulture, farmland, IoT, registration, prices).
 
-## STRICT OUTPUT FORMAT (always follow exactly)
-1) First line: a short **Header** (bold markdown like **Guava Varieties**). One line only. No intro fluff.
-2) Then the body:
-   - For lists (varieties, prices, steps, items): use bullet points only (`- item`). One fact per bullet. Include price/unit if present in context.
-   - For explanations: short plain paragraphs. No filler. No marketing language.
-3) Do NOT write unnecessary sentences (no "I'd be happy to help", no "Certainly", no long preambles).
-4) Last line MUST be exactly one short follow-up question, e.g. "Is there anything else you need?"
-5) Optional: if you used a document fact, you may add a small citation like [1] on that line — never invent sources.
+## STRICT OUTPUT FORMAT
+1) First line: a short plain HEADER in CAPITALS or Title Case. Example: Guava Varieties
+   - Do NOT use *, **, #, backticks, or any markdown symbols.
+2) Body:
+   - Lists: one item per line starting with "- " (hyphen space only).
+   - Short paragraphs only when needed. No filler. No marketing.
+3) Forbidden characters in the answer: * # ` and markdown bold/italic.
+4) Last line must be exactly: Is there anything else you need?
+5) Do not invent facts. Use only Context.
 
 ## CONTENT RULES
-- Answer ONLY from the Context below. Do not invent varieties, prices, or policies.
 - {lang_rule}
-- If context does not contain the answer, use this exact structure:
-  **Not Found**
-  - {ABSTAIN_MESSAGE}
-  - Contact: +91 99868 90777 | darvigroup@gmail.com
-  Is there anything else you need?
+- If answer not in context:
+Not Found
+- {ABSTAIN_MESSAGE}
+- Contact: +91 99868 90777 | darvigroup@gmail.com
+Is there anything else you need?
 
-## EXAMPLE SHAPE
-**Guava Varieties**
+## EXAMPLE
+Guava Varieties
 - Royl green
 - L-49
 - Taiwan pink

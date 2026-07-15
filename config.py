@@ -69,6 +69,13 @@ EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 )
 
+# Security — required in production (Railway variables)
+# API_KEY: chat from Netlify/site | ADMIN_KEY: upload + admin UI
+API_KEY = (os.getenv("API_KEY") or os.getenv("RAG_API_KEY") or "").strip()
+ADMIN_KEY = (os.getenv("ADMIN_KEY") or "").strip()
+# Public Swagger /docs (keep false in production)
+DOCS_ENABLED = os.getenv("DOCS_ENABLED", "false").lower() in ("1", "true", "yes")
+
 # OpenRouter (LLM only — Gemini removed)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OR_API_KEY")
 OPENROUTER_BASE_URL = os.getenv(

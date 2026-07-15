@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Darvi RAG Admin</title>
+  <style>
+    :root {
+      --g: #1B4C35;
+      --g2: #2E7D32;
+      --bg: #f4f6f5;
+      --card: #fff;
+      --bd: #e2e8e0;
+      --tx: #1a1a1a;
+      --mut: #64748b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      background: var(--bg); color: var(--tx);
+    }
+    header {
+      background: linear-gradient(90deg, var(--g), var(--g2));
+      color: #fff; padding: 14px 20px;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; flex-wrap: wrap;
+    }
+    header h1 { margin: 0; font-size: 1.15rem; font-weight: 650; }
+    header .sub { opacity: .85; font-size: .8rem; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .card {
+      background: var(--card); border: 1px solid var(--bd);
+      border-radius: 12px; padding: 16px; margin-bottom: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    }
+    .card h2 { margin: 0 0 12px; font-size: 1rem; color: var(--g); }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+    .stat {
+      background: #f0f7f2; border-radius: 10px; padding: 12px;
+      border: 1px solid var(--bd);
+    }
+    .stat b { display: block; font-size: 1.35rem; color: var(--g); }
+    .stat span { font-size: .75rem; color: var(--mut); }
+    input[type=text], input[type=password], textarea {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--bd);
+      border-radius: 8px; font-size: .9rem;
+    }
+    button, .btn {
+      background: var(--g); color: #fff; border: 0; border-radius: 8px;
+      padding: 10px 14px; font-size: .88rem; cursor: pointer; font-weight: 600;
+    }
+    button.secondary { background: #475569; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button:hover:not(:disabled) { filter: brightness(1.08); }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--bd); vertical-align: top; }
+    th { color: var(--mut); font-weight: 600; }
+    .tag {
+      display: inline-block; background: #e8f5e9; color: var(--g);
+      padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 600;
+    }
+    .err { color: #b91c1c; font-size: .85rem; }
+    .ok { color: var(--g); font-size: .85rem; }
+    #loginBox { max-width: 400px; margin: 60px auto; }
+    .hidden { display: none !important; }
+    pre {
+      white-space: pre-wrap; background: #f8faf9; padding: 10px;
+      border-radius: 8px; font-size: .82rem; border: 1px solid var(--bd);
+      max-height: 220px; overflow: auto;
+    }
+    .msg-user { color: #0f172a; }
+    .msg-bot { color: #334155; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Darvi RAG Admin</h1>
+      <div class="sub">Monitor index · Upload PDF/DOCX · View chats</div>
+    </div>
+    <div class="row hidden" id="headerActions">
+      <button type="button" class="secondary" id="btnLogout">Log out</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="card" id="loginBox">
+      <h2>Admin login</h2>
+      <p style="color:var(--mut);font-size:.85rem;margin-top:0">
+        Enter the <b>ADMIN_KEY</b> from Railway variables. This is not public Swagger.
+      </p>
+      <input type="password" id="adminKey" placeholder="ADMIN_KEY" autocomplete="current-password" />
+      <div class="row" style="margin-top:10px">
+        <button type="button" id="btnLogin">Enter dashboard</button>
+      </div>
+      <p id="loginErr" class="err"></p>
+    </div>
+
+    <div id="dash" class="hidden">
+      <div class="card">
+        <h2>System status</h2>
+        <div class="grid" id="statsGrid"></div>
+        <p id="statusMsg" class="ok" style="margin-bottom:0"></p>
+      </div>
+
+      <div class="card">
+        <h2>Indexed documents</h2>
+        <div class="row" style="margin-bottom:10px">
+          <button type="button" id="btnRefresh">Refresh</button>
+          <button type="button" class="secondary" id="btnIngestAll">Re-index all files</button>
+        </div>
+        <div id="docsTable"></div>
+      </div>
+
+      <div class="card">
+        <h2>Upload PDF or DOCX</h2>
+        <div class="row">
+          <input type="file" id="fileInput" accept=".pdf,.docx,application/pdf" />
+          <button type="button" id="btnUpload">Upload &amp; embed</button>
+        </div>
+        <p id="uploadMsg" style="margin-bottom:0"></p>
+      </div>
+
+      <div class="card">
+        <h2>Test chat</h2>
+        <textarea id="chatQ" rows="2" placeholder="Ask a question…"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button type="button" id="btnChat">Ask</button>
+        </div>
+        <pre id="chatOut" class="hidden"></pre>
+      </div>
+
+      <div class="card">
+        <h2>Recent chat messages</h2>
+        <div id="chatsTable"></div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const KEY = 'darvi_admin_key';
+    let adminKey = sessionStorage.getItem(KEY) || '';
+
+    function headers() {
+      return { 'X-API-Key': adminKey, 'Content-Type': 'application/json' };
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        ...opts,
+        headers: { ...headers(), ...(opts.headers || {}) },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.detail || data.error || res.statusText;
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
+      return data;
+    }
+
+    function showDash(on) {
+      document.getElementById('loginBox').classList.toggle('hidden', on);
+      document.getElementById('dash').classList.toggle('hidden', !on);
+      document.getElementById('headerActions').classList.toggle('hidden', !on);
+    }
+
+    async function loadAll() {
+      const [stats, chats] = await Promise.all([
+        api('/admin/api/stats'),
+        api('/admin/api/chats?limit=30'),
+      ]);
+      const g = document.getElementById('statsGrid');
+      const pg = stats.postgres || {};
+      g.innerHTML = `
+        <div class="stat"><b>${stats.chunk_count ?? 0}</b><span>Chunks</span></div>
+        <div class="stat"><b>${(stats.documents || []).length}</b><span>Documents</span></div>
+        <div class="stat"><b>${pg.message_count ?? '—'}</b><span>Chat messages</span></div>
+        <div class="stat"><b>${pg.ok ? 'OK' : '—'}</b><span>Postgres</span></div>
+      `;
+      document.getElementById('statusMsg').textContent =
+        'Embedding: ' + (stats.embedding_model || '—');
+
+      const docs = stats.documents || [];
+      document.getElementById('docsTable').innerHTML = docs.length
+        ? `<table><thead><tr><th>File</th><th>Pages</th><th>Chunks</th><th>Indexed</th></tr></thead>
+           <tbody>${docs.map(d => `<tr>
+             <td><span class="tag">${d.doc_id}</span></td>
+             <td>${d.pages ?? '—'}</td>
+             <td>${d.chunk_count ?? '—'}</td>
+             <td>${(d.indexed_at || '').slice(0, 19)}</td>
+           </tr>`).join('')}</tbody></table>`
+        : '<p class="err">No documents indexed yet. Upload a PDF/DOCX.</p>';
+
+      const msgs = chats.messages || [];
+      document.getElementById('chatsTable').innerHTML = msgs.length
+        ? `<table><thead><tr><th>When</th><th>Role</th><th>Source</th><th>Content</th></tr></thead>
+           <tbody>${msgs.map(m => `<tr>
+             <td>${(m.created_at || '').slice(0, 19)}</td>
+             <td>${m.role}</td>
+             <td>${m.source || ''}</td>
+             <td class="${m.role === 'user' ? 'msg-user' : 'msg-bot'}">${escapeHtml((m.content || '').slice(0, 280))}</td>
+           </tr>`).join('')}</tbody></table>`
+        : '<p style="color:var(--mut)">No chats logged yet (needs Postgres).</p>';
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    document.getElementById('btnLogin').onclick = async () => {
+      adminKey = document.getElementById('adminKey').value.trim();
+      document.getElementById('loginErr').textContent = '';
+      try {
+        await api('/admin/api/stats');
+        sessionStorage.setItem(KEY, adminKey);
+        showDash(true);
+        await loadAll();
+      } catch (e) {
+        document.getElementById('loginErr').textContent = e.message || 'Login failed';
+        adminKey = '';
+      }
+    };
+
+    document.getElementById('btnLogout').onclick = () => {
+      sessionStorage.removeItem(KEY);
+      adminKey = '';
+      showDash(false);
+    };
+
+    document.getElementById('btnRefresh').onclick = () => loadAll().catch(e => alert(e.message));
+
+    document.getElementById('btnIngestAll').onclick = async () => {
+      if (!confirm('Re-index all files in data/?')) return;
+      try {
+        const r = await api('/admin/api/ingest', {
+          method: 'POST',
+          body: JSON.stringify({ force: false }),
+        });
+        alert('Ingest done. Indexed=' + r.indexed + ' skipped=' + r.skipped + ' failed=' + r.failed);
+        await loadAll();
+      } catch (e) { alert(e.message); }
+    };
+
+    document.getElementById('btnUpload').onclick = async () => {
+      const f = document.getElementById('fileInput').files[0];
+      const msg = document.getElementById('uploadMsg');
+      if (!f) { msg.className = 'err'; msg.textContent = 'Choose a file first.'; return; }
+      msg.className = ''; msg.textContent = 'Uploading…';
+      try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const res = await fetch('/admin/api/upload', {
+          method: 'POST',
+          headers: { 'X-API-Key': adminKey },
+          body: fd,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        msg.className = 'ok';
+        msg.textContent = 'OK: ' + (data.results?.[0]?.status || 'done') +
+          ' · chunks=' + (data.results?.[0]?.chunks ?? '?');
+        document.getElementById('fileInput').value = '';
+        await loadAll();
+      } catch (e) {
+        msg.className = 'err';
+        msg.textContent = e.message;
+      }
+    };
+
+    document.getElementById('btnChat').onclick = async () => {
+      const q = document.getElementById('chatQ').value.trim();
+      const out = document.getElementById('chatOut');
+      if (!q) return;
+      out.classList.remove('hidden');
+      out.textContent = 'Thinking…';
+      try {
+        const r = await api('/admin/api/chat', {
+          method: 'POST',
+          body: JSON.stringify({ question: q, language: 'en', source: 'admin-ui' }),
+        });
+        out.textContent = r.answer || JSON.stringify(r, null, 2);
+        await loadAll();
+      } catch (e) {
+        out.textContent = 'Error: ' + e.message;
+      }
+    };
+
+    // Auto-login if key in session
+    if (adminKey) {
+      showDash(true);
+      loadAll().catch(() => {
+        sessionStorage.removeItem(KEY);
+        adminKey = '';
+        showDash(false);
+      });
+    }
+  </script>
+</body>
+</html>
