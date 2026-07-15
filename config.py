@@ -139,14 +139,15 @@ def sync_seed_pdfs() -> int:
         return 0
 
     copied = 0
-    for src in SEED_DATA_DIR.glob("*.pdf"):
-        dest = DATA_DIR / src.name
-        try:
-            if not dest.exists() or dest.stat().st_size != src.stat().st_size:
-                shutil.copy2(src, dest)
-                copied += 1
-        except OSError as exc:
-            logger.warning("Could not copy seed PDF %s: %s", src.name, exc)
+    for pattern in ("*.pdf", "*.docx"):
+        for src in SEED_DATA_DIR.glob(pattern):
+            dest = DATA_DIR / src.name
+            try:
+                if not dest.exists() or dest.stat().st_size != src.stat().st_size:
+                    shutil.copy2(src, dest)
+                    copied += 1
+            except OSError as exc:
+                logger.warning("Could not copy seed file %s: %s", src.name, exc)
     return copied
 
 

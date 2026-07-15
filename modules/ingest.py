@@ -1,4 +1,4 @@
-"""Incremental PDF ingest into Chroma."""
+"""Incremental PDF/DOCX ingest into Chroma."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,6 +7,7 @@ from typing import Optional
 
 from config import CHROMA_DIR, DATA_DIR, EMBEDDING_MODEL, ensure_dirs
 from modules.chunker import create_chunks_from_pages
+from modules.document_loader import SUPPORTED_EXTENSIONS, load_document_pages
 from modules.embedder import Embedder
 from modules.manifest import (
     list_documents,
@@ -16,7 +17,6 @@ from modules.manifest import (
     upsert_document,
 )
 from modules.metrics import timer
-from modules.pdf_loader import load_pdf_pages
 from modules.vector_store import VectorStore
 from utils.hashing import file_sha256
 
@@ -65,6 +65,13 @@ def _doc_id_for(path: Path) -> str:
     return path.name
 
 
+def _list_data_files(data_dir: Path) -> list[Path]:
+    files: list[Path] = []
+    for ext in sorted(SUPPORTED_EXTENSIONS):
+        files.extend(data_dir.glob(f"*{ext}"))
+    return sorted(files, key=lambda p: p.name.lower())
+
+
 def ingest_file(
     path: Path,
     *,
@@ -102,9 +109,12 @@ def _ingest_file_inner(
         return FileIngestResult(
             path=str(path), doc_id=doc_id, status="failed", error="file not found"
         )
-    if path.suffix.lower() != ".pdf":
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         return FileIngestResult(
-            path=str(path), doc_id=doc_id, status="failed", error="only .pdf supported"
+            path=str(path),
+            doc_id=doc_id,
+            status="failed",
+            error=f"unsupported type {path.suffix}; use PDF or DOCX",
         )
 
     try:
@@ -121,13 +131,13 @@ def _ingest_file_inner(
                 chunks=int(existing.get("chunk_count", 0)),
             )
 
-        pages = load_pdf_pages(path)
+        pages = load_document_pages(path)
         if not pages:
             return FileIngestResult(
                 path=str(path),
                 doc_id=doc_id,
                 status="failed",
-                error="no extractable text (scanned PDF? OCR out of scope v1)",
+                error="no extractable text",
             )
 
         chunks = create_chunks_from_pages(pages, doc_id=doc_id, source=path.name)
@@ -169,9 +179,9 @@ def prune_missing(
     manifest: dict,
     data_dir: Path | None = None,
 ) -> list[FileIngestResult]:
-    """Remove index entries for PDFs no longer present in data dir."""
+    """Remove index entries for files no longer present in data dir."""
     data_dir = data_dir or DATA_DIR
-    present = {p.name for p in data_dir.glob("*.pdf")}
+    present = {p.name for p in _list_data_files(data_dir)}
     results: list[FileIngestResult] = []
     for doc_id in list(manifest.get("documents", {}).keys()):
         if doc_id not in present:
@@ -192,7 +202,7 @@ def ingest_paths(
     embedder: Embedder | None = None,
     store: VectorStore | None = None,
 ) -> IngestReport:
-    """Ingest one or more PDFs (default: all under data/)."""
+    """Ingest one or more PDF/DOCX files (default: all under data/)."""
     ensure_dirs()
     data_dir = Path(data_dir or DATA_DIR)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -214,7 +224,7 @@ def ingest_paths(
         if paths:
             files = [Path(p) for p in paths]
         else:
-            files = sorted(data_dir.glob("*.pdf"))
+            files = _list_data_files(data_dir)
 
         report = IngestReport(embedding_model=embedder.model_name)
         for f in files:
@@ -228,7 +238,6 @@ def ingest_paths(
                 )
             )
 
-        # Only prune when ingesting the whole data dir
         if paths is None:
             report.results.extend(prune_missing(store, manifest, data_dir))
 

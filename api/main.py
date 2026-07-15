@@ -1,19 +1,18 @@
 """
-PDF RAG Backend API
-
-Designed to be consumed by any frontend (Next.js/Vercel, React, mobile, etc.).
+PDF RAG Backend API — Railway production
 
   GET  /health
   GET  /ready
   GET  /stats
   POST /ingest
-  POST /ingest/upload
-  POST /chat
+  POST /ingest/upload   (PDF or DOCX)
+  POST /chat            (RAG + optional Postgres log)
 """
 from __future__ import annotations
 
 import logging
 import shutil
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
@@ -39,19 +38,28 @@ logging.basicConfig(level=logging.INFO)
 
 
 def _bootstrap_runtime() -> None:
-    """Writable dirs + seed PDFs. Must never raise on serverless cold start."""
     try:
         ensure_dirs()
         n = sync_seed_pdfs()
         if n:
             logger.info("Synced %s seed PDF(s) into %s", n, DATA_DIR)
+        # also copy docx seeds if any
+        from config import SEED_DATA_DIR
+
+        if SEED_DATA_DIR.exists() and SEED_DATA_DIR.resolve() != DATA_DIR.resolve():
+            for src in SEED_DATA_DIR.glob("*.docx"):
+                dest = DATA_DIR / src.name
+                try:
+                    if not dest.exists() or dest.stat().st_size != src.stat().st_size:
+                        shutil.copy2(src, dest)
+                except OSError:
+                    pass
         logger.info("Runtime paths: %s", runtime_info())
     except Exception:  # noqa: BLE001
         logger.exception("Runtime bootstrap failed")
 
 
 def _run_auto_ingest_background() -> None:
-    """Ingest in a daemon thread so healthchecks can pass during model download."""
     import threading
 
     def _job() -> None:
@@ -74,8 +82,14 @@ def _run_auto_ingest_background() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Keep startup fast — Railway healthcheck fails if we block on model download.
     _bootstrap_runtime()
+    try:
+        from modules.db import ensure_schema, is_db_configured
+
+        if is_db_configured():
+            ensure_schema()
+    except Exception:  # noqa: BLE001
+        logger.exception("DB schema bootstrap skipped/failed")
     if AUTO_INGEST_ON_START:
         _run_auto_ingest_background()
     yield
@@ -83,11 +97,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PDF RAG API",
-    description=(
-        "Backend RAG service: ingest PDFs, retrieve grounded context, "
-        "answer via Gemini. Connect any frontend via HTTP/JSON."
-    ),
-    version="2.1.1",
+    description="Darvi / PDF RAG: ingest PDF+DOCX, chat with sources, log to Postgres.",
+    version="2.2.0",
     lifespan=lifespan,
 )
 
@@ -107,6 +118,9 @@ class ChatRequest(BaseModel):
     min_score: Optional[float] = None
     doc_id: Optional[str] = None
     history: Optional[list[dict[str, str]]] = None
+    session_id: Optional[str] = None
+    source: Optional[str] = "api"
+    language: Optional[str] = "en"
 
 
 class ChatResponse(BaseModel):
@@ -114,6 +128,8 @@ class ChatResponse(BaseModel):
     sources: list[dict[str, Any]] = Field(default_factory=list)
     abstained: bool = False
     metrics: dict[str, Any] = Field(default_factory=dict)
+    session_id: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 class IngestRequest(BaseModel):
@@ -124,27 +140,36 @@ class IngestRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    """Liveness — no disk writes required."""
-    return {
+    out: dict[str, Any] = {
         "status": "ok",
         "service": "pdf-rag-api",
         "serverless": IS_SERVERLESS,
+        "version": "2.2.0",
     }
+    try:
+        from modules.db import db_health
+
+        out["postgres"] = db_health()
+    except Exception as exc:  # noqa: BLE001
+        out["postgres"] = {"ok": False, "detail": str(exc)}
+    return out
 
 
 @app.get("/ready")
 def ready() -> dict[str, Any]:
-    """Readiness: writable storage + index reachable."""
     try:
         _bootstrap_runtime()
         from modules.ingest import get_index_stats
 
         st = get_index_stats()
+        from modules.db import db_health
+
         return {
             "status": "ready",
             "chunk_count": st["chunk_count"],
             "documents": len(st.get("documents") or []),
             "paths": runtime_info(),
+            "postgres": db_health(),
         }
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -157,6 +182,12 @@ def stats() -> dict[str, Any]:
 
     out = get_index_stats()
     out["runtime"] = runtime_info()
+    try:
+        from modules.db import db_health
+
+        out["postgres"] = db_health()
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 
@@ -172,14 +203,18 @@ def ingest(body: IngestRequest) -> dict[str, Any]:
 
 @app.post("/ingest/upload")
 async def ingest_upload(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Upload a PDF into writable data dir and index it."""
+    """Upload a PDF or DOCX and index it."""
     _bootstrap_runtime()
     from modules.ingest import ingest_paths
 
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
+    name = (file.filename or "").strip()
+    lower = name.lower()
+    if not name or not (lower.endswith(".pdf") or lower.endswith(".docx")):
+        raise HTTPException(
+            status_code=400, detail="Only PDF and DOCX uploads are supported"
+        )
 
-    dest = DATA_DIR / Path(file.filename).name
+    dest = DATA_DIR / Path(name).name
     try:
         with dest.open("wb") as out:
             shutil.copyfileobj(file.file, out)
@@ -202,7 +237,6 @@ def chat(body: ChatRequest) -> dict[str, Any]:
     from modules.ingest import get_index_stats, ingest_paths
 
     st = get_index_stats()
-    # Serverless cold start: auto-build index if empty
     if st["chunk_count"] == 0:
         try:
             sync_seed_pdfs()
@@ -218,8 +252,12 @@ def chat(body: ChatRequest) -> dict[str, Any]:
     if st["chunk_count"] == 0:
         raise HTTPException(
             status_code=400,
-            detail="Index empty. POST /ingest or upload a PDF first.",
+            detail="Index empty. POST /ingest or upload a PDF/DOCX first.",
         )
+
+    session_id = (body.session_id or "").strip() or str(uuid.uuid4())
+    source = (body.source or "api").strip() or "api"
+    language = (body.language or "en").strip() or "en"
 
     try:
         service = ChatService(
@@ -232,6 +270,10 @@ def chat(body: ChatRequest) -> dict[str, Any]:
             top_k=body.top_k,
             min_score=body.min_score,
             doc_id=body.doc_id,
+            session_id=session_id,
+            source=source,
+            language=language,
+            persist=True,
         )
         return resp.to_dict()
     except ValueError as exc:
@@ -244,17 +286,12 @@ def chat(body: ChatRequest) -> dict[str, Any]:
 def root() -> dict[str, Any]:
     return {
         "message": "PDF RAG API",
+        "version": "2.2.0",
         "docs": "/docs",
         "health": "/health",
         "ready": "/ready",
         "chat": "POST /chat",
         "ingest": "POST /ingest",
-        "upload": "POST /ingest/upload",
+        "upload": "POST /ingest/upload (pdf|docx)",
         "serverless": IS_SERVERLESS,
-        "note": (
-            "On Vercel, storage is ephemeral under /tmp. "
-            "For persistent production RAG, use Docker on Railway."
-            if IS_SERVERLESS
-            else "Long-running server mode."
-        ),
     }

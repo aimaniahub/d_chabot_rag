@@ -8,6 +8,8 @@ This backend deploys as a **Docker service** on Railway.
 - Railway account: https://railway.app
 - Gemini API key (`GOOGLE_API_KEY`)
 
+**Full UI checklist (Postgres + Netlify + chat):** see [UI_SETUP_STEPS.md](./UI_SETUP_STEPS.md).
+
 ## 2. Deploy from GitHub (dashboard)
 
 1. Open [Railway New Project](https://railway.app/new)

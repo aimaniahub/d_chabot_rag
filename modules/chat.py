@@ -26,6 +26,8 @@ class ChatResponse:
     hits: list[RetrievedChunk] = field(default_factory=list)
     metrics: QueryMetrics = field(default_factory=QueryMetrics)
     abstained: bool = False
+    session_id: str | None = None
+    conversation_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -33,6 +35,8 @@ class ChatResponse:
             "sources": self.sources,
             "abstained": self.abstained,
             "metrics": self.metrics.to_dict(),
+            "session_id": self.session_id,
+            "conversation_id": self.conversation_id,
         }
 
 
@@ -70,6 +74,10 @@ class ChatService:
         top_k: int | None = None,
         min_score: float | None = None,
         doc_id: str | None = None,
+        session_id: str | None = None,
+        source: str = "api",
+        language: str = "en",
+        persist: bool = True,
     ) -> ChatResponse:
         question = (question or "").strip()
         if not question:
@@ -90,7 +98,6 @@ class ChatService:
                 doc_id=doc_id,
                 question_embedding=q_emb,
             )
-            # retrieve() includes embed if no emb — we passed emb so mostly query time
             timings.retrieve_ms = retrieval.elapsed_ms
             hits = retrieval.hits
             metrics.hits_returned = len(retrieval.all_hits)
@@ -98,7 +105,9 @@ class ChatService:
             metrics.max_score = retrieval.max_score
 
             with timer() as prompt_t:
-                prompt = build_prompt(question, hits, history=history)
+                prompt = build_prompt(
+                    question, hits, history=history, language=language
+                )
             timings.prompt_ms = prompt_t["ms"]
             metrics.tokens.estimated_prompt_chars = len(prompt)
             metrics.tokens.prompt_tokens = estimate_tokens_from_chars(len(prompt))
@@ -116,11 +125,34 @@ class ChatService:
 
         timings.total_ms = total_t["ms"]
         metrics.timings = timings
+        sources = sources_payload(hits)
+
+        conversation_id = None
+        if persist and session_id:
+            try:
+                from modules.db import log_chat_turn
+
+                logged = log_chat_turn(
+                    session_id=session_id,
+                    question=question,
+                    answer=answer,
+                    sources=sources,
+                    metrics=metrics.to_dict(),
+                    abstained=abstained,
+                    source=source,
+                    language=language,
+                )
+                if logged:
+                    conversation_id = logged.get("conversation_id")
+            except Exception:  # noqa: BLE001
+                pass
 
         return ChatResponse(
             answer=answer,
-            sources=sources_payload(hits),
+            sources=sources,
             hits=list(hits),
             metrics=metrics,
             abstained=abstained,
+            session_id=session_id,
+            conversation_id=conversation_id,
         )
