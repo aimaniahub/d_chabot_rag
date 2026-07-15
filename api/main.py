@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -196,27 +197,85 @@ def _do_chat(body: ChatRequest) -> dict[str, Any]:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+_ALLOWED_UPLOAD = {".pdf", ".docx", ".md", ".markdown", ".txt"}
+
+
+def _validate_upload_name(name: str) -> str:
+    name = (name or "").strip()
+    lower = name.lower()
+    ext = Path(name).suffix.lower()
+    if not name or ext not in _ALLOWED_UPLOAD:
+        raise HTTPException(
+            status_code=400,
+            detail="Allowed types: PDF, DOCX, MD, Markdown, TXT",
+        )
+    # prevent path traversal
+    safe = Path(name).name
+    if not safe or safe in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return safe
+
+
 def _do_upload(file: UploadFile) -> dict[str, Any]:
     _bootstrap_runtime()
     from modules.ingest import ingest_paths
 
-    name = (file.filename or "").strip()
-    lower = name.lower()
-    if not name or not (lower.endswith(".pdf") or lower.endswith(".docx")):
-        raise HTTPException(status_code=400, detail="Only PDF and DOCX allowed")
-
-    dest = DATA_DIR / Path(name).name
+    safe_name = _validate_upload_name(file.filename or "")
+    dest = DATA_DIR / safe_name
     try:
         with dest.open("wb") as out:
             shutil.copyfileobj(file.file, out)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    finally:
-        # caller may await close
-        pass
 
     report = ingest_paths(paths=[dest], force=True)
     return {"saved_to": str(dest), **report.to_dict()}
+
+
+def _do_upload_many(files: list[UploadFile]) -> dict[str, Any]:
+    """Sequential bulk upload + embed (one report combined)."""
+    _bootstrap_runtime()
+    from modules.ingest import ingest_paths
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    saved: list[Path] = []
+    errors: list[dict[str, str]] = []
+    for f in files:
+        try:
+            safe_name = _validate_upload_name(f.filename or "")
+            dest = DATA_DIR / safe_name
+            with dest.open("wb") as out:
+                shutil.copyfileobj(f.file, out)
+            saved.append(dest)
+        except HTTPException as exc:
+            errors.append(
+                {
+                    "file": f.filename or "unknown",
+                    "error": str(exc.detail),
+                }
+            )
+        except OSError as exc:
+            errors.append({"file": f.filename or "unknown", "error": str(exc)})
+        finally:
+            try:
+                f.file.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    if not saved:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "No valid files uploaded", "errors": errors},
+        )
+
+    report = ingest_paths(paths=saved, force=True)
+    out = report.to_dict()
+    out["uploaded_count"] = len(saved)
+    out["saved_paths"] = [str(p) for p in saved]
+    out["upload_errors"] = errors
+    return out
 
 
 # ----- Public -----
@@ -312,6 +371,21 @@ async def ingest_upload(
     return result
 
 
+@app.post("/ingest/upload/bulk")
+async def ingest_upload_bulk(
+    files: List[UploadFile] = File(...),
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    try:
+        return _do_upload_many(list(files))
+    finally:
+        for f in files:
+            try:
+                await f.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 # ----- Admin JSON API (same admin key; used by /admin UI) -----
 
 
@@ -367,6 +441,22 @@ async def admin_upload(
         return _do_upload(file)
     finally:
         await file.close()
+
+
+@app.post("/admin/api/upload/bulk")
+async def admin_upload_bulk(
+    files: List[UploadFile] = File(...),
+    _key: str = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Bulk upload many PDF/DOCX/MD files and embed each."""
+    try:
+        return _do_upload_many(list(files))
+    finally:
+        for f in files:
+            try:
+                await f.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 @app.delete("/admin/api/documents/{doc_id}")

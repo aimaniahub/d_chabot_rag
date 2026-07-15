@@ -166,13 +166,25 @@
 
       <!-- FILES -->
       <section id="tab-files" class="tab-panel hidden">
-        <div class="card">
-          <h2>Upload PDF / DOCX</h2>
-          <div class="row">
-            <input type="file" id="fileInput" accept=".pdf,.docx,application/pdf" />
-            <button type="button" class="btn" id="btnUpload">Upload and embed</button>
+        <div class="two-col">
+          <div class="card">
+            <h2>Single upload</h2>
+            <p class="mut" style="margin-top:0">One file: PDF, DOCX, MD, TXT</p>
+            <div class="row">
+              <input type="file" id="fileInput" accept=".pdf,.docx,.md,.markdown,.txt,application/pdf,text/markdown,text/plain" />
+              <button type="button" class="btn" id="btnUpload">Upload and embed</button>
+            </div>
+            <p id="uploadMsg" class="mut" style="margin-bottom:0"></p>
           </div>
-          <p id="uploadMsg" class="mut" style="margin-bottom:0"></p>
+          <div class="card">
+            <h2>Bulk upload</h2>
+            <p class="mut" style="margin-top:0">Select many files at once (Ctrl/Cmd+click). Each is saved and embedded.</p>
+            <div class="row">
+              <input type="file" id="bulkInput" multiple accept=".pdf,.docx,.md,.markdown,.txt,application/pdf,text/markdown,text/plain" />
+              <button type="button" class="btn" id="btnBulkUpload">Upload all and embed</button>
+            </div>
+            <p id="bulkMsg" class="mut" style="margin-bottom:0"></p>
+          </div>
         </div>
         <div class="card">
           <h2>Indexed documents</h2>
@@ -480,11 +492,50 @@
           body: fd,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Upload failed');
         const r0 = (data.results || [])[0] || {};
         msg.className = 'ok';
         msg.textContent = 'OK · ' + (r0.status || 'done') + ' · chunks=' + (r0.chunks ?? '?');
         document.getElementById('fileInput').value = '';
+        await loadAll();
+      } catch (e) {
+        msg.className = 'err';
+        msg.textContent = e.message;
+      }
+    };
+
+    document.getElementById('btnBulkUpload').onclick = async () => {
+      const list = document.getElementById('bulkInput').files;
+      const msg = document.getElementById('bulkMsg');
+      if (!list || !list.length) {
+        msg.className = 'err';
+        msg.textContent = 'Select one or more files.';
+        return;
+      }
+      msg.className = 'mut';
+      msg.textContent = 'Bulk uploading ' + list.length + ' file(s)…';
+      try {
+        const fd = new FormData();
+        for (let i = 0; i < list.length; i++) {
+          fd.append('files', list[i]);
+        }
+        const res = await fetch('/admin/api/upload/bulk', {
+          method: 'POST',
+          headers: { 'X-API-Key': adminKey },
+          body: fd,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const d = data.detail;
+          throw new Error(typeof d === 'string' ? d : (d?.message || 'Bulk upload failed'));
+        }
+        msg.className = 'ok';
+        msg.textContent =
+          'Bulk OK · uploaded=' + (data.uploaded_count ?? '?') +
+          ' · indexed=' + (data.indexed ?? 0) +
+          ' · failed=' + (data.failed ?? 0) +
+          (data.upload_errors?.length ? ' · skip errors=' + data.upload_errors.length : '');
+        document.getElementById('bulkInput').value = '';
         await loadAll();
       } catch (e) {
         msg.className = 'err';
