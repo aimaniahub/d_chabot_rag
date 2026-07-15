@@ -69,15 +69,16 @@ GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 )
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# 2.0-flash usually has higher free-tier allowance than 2.5-flash
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Chunking
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
 
-# Retrieval
-TOP_K = int(os.getenv("TOP_K", "5"))
-MIN_SCORE = float(os.getenv("MIN_SCORE", "0.30"))
+# Retrieval (lower min_score helps table-style plant lists match better)
+TOP_K = int(os.getenv("TOP_K", "8"))
+MIN_SCORE = float(os.getenv("MIN_SCORE", "0.22"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "pdf_rag")
 
 # Prompt / chat
