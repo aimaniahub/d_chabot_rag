@@ -1,12 +1,24 @@
-# Railway: deploy from Dockerfile
-# Set secrets in Railway dashboard: GOOGLE_API_KEY, CORS_ORIGINS, etc.
+# Railway deployment — Docker backend
+# https://docs.railway.com/guides/dockerfiles
 
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+watchPatterns = [
+  "api/**",
+  "modules/**",
+  "utils/**",
+  "config.py",
+  "app.py",
+  "requirements.txt",
+  "Dockerfile",
+  "scripts/**",
+  "data/**",
+]
 
 [deploy]
+# Uses Dockerfile ENTRYPOINT + CMD (entrypoint binds to $PORT from Railway)
 healthcheckPath = "/health"
-healthcheckTimeout = 100
+healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 5
+restartPolicyMaxRetries = 10

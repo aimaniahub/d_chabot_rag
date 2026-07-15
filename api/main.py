@@ -50,13 +50,15 @@ def _bootstrap_runtime() -> None:
         logger.exception("Runtime bootstrap failed")
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    _bootstrap_runtime()
-    if AUTO_INGEST_ON_START:
+def _run_auto_ingest_background() -> None:
+    """Ingest in a daemon thread so healthchecks can pass during model download."""
+    import threading
+
+    def _job() -> None:
         try:
             from modules.ingest import ingest_paths
 
+            logger.info("Background auto-ingest starting...")
             report = ingest_paths()
             logger.info(
                 "Auto-ingest finished: indexed=%s skipped=%s failed=%s",
@@ -66,6 +68,16 @@ async def lifespan(app: FastAPI):
             )
         except Exception:  # noqa: BLE001
             logger.exception("Auto-ingest on startup failed")
+
+    threading.Thread(target=_job, name="auto-ingest", daemon=True).start()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Keep startup fast — Railway healthcheck fails if we block on model download.
+    _bootstrap_runtime()
+    if AUTO_INGEST_ON_START:
+        _run_auto_ingest_background()
     yield
 
 
