@@ -1,4 +1,4 @@
-"""Optional S3-compatible storage (Railway Buckets) for original uploads."""
+"""Optional S3-compatible storage (Railway / Tigris buckets) for original uploads."""
 from __future__ import annotations
 
 import logging
@@ -34,13 +34,17 @@ def _get_client():
         import boto3
         from botocore.config import Config
 
+        # Works with Railway Buckets and Tigris (t3.storageapi.dev)
         _client = boto3.client(
             "s3",
             endpoint_url=S3_ENDPOINT,
             aws_access_key_id=S3_ACCESS_KEY,
             aws_secret_access_key=S3_SECRET_KEY,
             region_name=S3_REGION or "auto",
-            config=Config(signature_version="s3v4"),
+            config=Config(
+                signature_version="s3v4",
+                s3={"addressing_style": "virtual"},
+            ),
         )
         return _client
     except Exception as exc:  # noqa: BLE001
@@ -64,7 +68,18 @@ def upload_file(local_path: Path, key: str | None = None) -> Optional[str]:
         return None
     key = key or object_key(path.name)
     try:
-        client.upload_file(str(path), S3_BUCKET, key)
+        extra = {}
+        # best-effort content type
+        suffix = path.suffix.lower()
+        ctype = {
+            ".pdf": "application/pdf",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".md": "text/markdown",
+            ".txt": "text/plain",
+        }.get(suffix)
+        if ctype:
+            extra["ExtraArgs"] = {"ContentType": ctype}
+        client.upload_file(str(path), S3_BUCKET, key, **extra)
         logger.info("Uploaded %s -> s3://%s/%s", path.name, S3_BUCKET, key)
         return key
     except Exception as exc:  # noqa: BLE001
@@ -122,10 +137,7 @@ def list_keys(prefix: str | None = None) -> list[str]:
 
 
 def restore_missing_to_local(data_dir: Path) -> int:
-    """
-    If bucket has uploads missing on local disk, download them.
-    Call on startup so re-embed can work after volume issues.
-    """
+    """Download bucket objects missing on local disk."""
     if not is_enabled():
         return 0
     keys = list_keys()
@@ -142,6 +154,40 @@ def restore_missing_to_local(data_dir: Path) -> int:
     if restored:
         logger.info("Restored %s file(s) from S3 bucket to %s", restored, data_dir)
     return restored
+
+
+def ping() -> dict:
+    """Live connectivity check for admin UI."""
+    if not is_enabled():
+        return {
+            "ok": False,
+            "enabled": False,
+            "detail": "S3 not configured (need BUCKET + ACCESS_KEY_ID + SECRET_ACCESS_KEY)",
+        }
+    client = _get_client()
+    if client is None:
+        return {"ok": False, "enabled": True, "detail": "client init failed"}
+    try:
+        # list a few keys under prefix
+        keys = list_keys()
+        return {
+            "ok": True,
+            "enabled": True,
+            "bucket": S3_BUCKET,
+            "endpoint": S3_ENDPOINT,
+            "region": S3_REGION,
+            "prefix": S3_PREFIX,
+            "object_count": len(keys),
+            "sample_keys": keys[:20],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "enabled": True,
+            "bucket": S3_BUCKET,
+            "endpoint": S3_ENDPOINT,
+            "detail": str(exc),
+        }
 
 
 def status() -> dict:

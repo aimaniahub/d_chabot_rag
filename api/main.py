@@ -408,6 +408,7 @@ def admin_stats(_key: str = Depends(require_admin_key)) -> dict[str, Any]:
     from config import storage_health
     from modules.db import db_health
     from modules.ingest import get_index_stats
+    from modules.object_store import ping as s3_ping
     from modules.object_store import status as s3_status
 
     out = get_index_stats()
@@ -415,7 +416,33 @@ def admin_stats(_key: str = Depends(require_admin_key)) -> dict[str, Any]:
     out["runtime"] = runtime_info()
     out["storage"] = storage_health()
     out["bucket"] = s3_status()
+    out["bucket_live"] = s3_ping()
     return out
+
+
+@app.get("/admin/api/bucket/ping")
+def admin_bucket_ping(_key: str = Depends(require_admin_key)) -> dict[str, Any]:
+    """Test S3/Railway bucket connectivity."""
+    from modules.object_store import ping
+
+    return ping()
+
+
+@app.post("/admin/api/bucket/restore")
+def admin_bucket_restore(_key: str = Depends(require_admin_key)) -> dict[str, Any]:
+    """Pull missing files from bucket into /data/uploads and re-index them."""
+    _bootstrap_runtime()
+    from modules.ingest import ingest_paths
+    from modules.object_store import is_enabled, restore_missing_to_local
+
+    if not is_enabled():
+        raise HTTPException(status_code=400, detail="Bucket not configured")
+    n = restore_missing_to_local(DATA_DIR)
+    report = ingest_paths(force=False, prune_missing_files=False)
+    return {
+        "restored_files": n,
+        "ingest": report.to_dict(),
+    }
 
 
 @app.get("/admin/api/chats")

@@ -197,6 +197,17 @@
           </div>
         </div>
         <div class="card">
+          <h2>S3 / Railway Bucket</h2>
+          <p class="mut" style="margin-top:0">
+            Original files are stored on volume and also backed up to the bucket when credentials are set.
+          </p>
+          <div class="row" style="margin-bottom:8px">
+            <button type="button" class="btn" id="btnBucketPing">Test bucket</button>
+            <button type="button" class="secondary" id="btnBucketRestore">Restore missing from bucket + re-index</button>
+          </div>
+          <pre id="bucketOut" class="hidden"></pre>
+        </div>
+        <div class="card">
           <h2>Indexed documents</h2>
           <div class="row" style="margin-bottom:10px">
             <button type="button" class="btn" id="btnRefreshDocs">Refresh list</button>
@@ -567,6 +578,32 @@
       } catch (e) {
         msg.className = 'err';
         msg.textContent = e.message;
+      }
+    };
+
+    document.getElementById('btnBucketPing').onclick = async () => {
+      const out = document.getElementById('bucketOut');
+      out.classList.remove('hidden');
+      out.textContent = 'Testing bucket…';
+      try {
+        const r = await api('/admin/api/bucket/ping');
+        out.textContent = JSON.stringify(r, null, 2);
+      } catch (e) {
+        out.textContent = 'Error: ' + e.message;
+      }
+    };
+
+    document.getElementById('btnBucketRestore').onclick = async () => {
+      if (!confirm('Download missing files from bucket and re-index?')) return;
+      const out = document.getElementById('bucketOut');
+      out.classList.remove('hidden');
+      out.textContent = 'Restoring…';
+      try {
+        const r = await api('/admin/api/bucket/restore', { method: 'POST', body: '{}' });
+        out.textContent = JSON.stringify(r, null, 2);
+        await loadAll();
+      } catch (e) {
+        out.textContent = 'Error: ' + e.message;
       }
     };
 
