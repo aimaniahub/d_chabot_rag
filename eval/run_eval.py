@@ -294,9 +294,9 @@ def run_eval_suite(suite: str = "predeploy") -> dict[str, Any]:
             parts.append(eval_latency_tokens())
         # predeploy includes lightweight latency only if API key present
         if suite == "predeploy":
-            from config import GEMINI_API_KEY
+            from config import OPENROUTER_API_KEY
 
-            if GEMINI_API_KEY:
+            if OPENROUTER_API_KEY:
                 parts.append(eval_latency_tokens(n_queries=2))
             else:
                 parts.append(
@@ -304,7 +304,7 @@ def run_eval_suite(suite: str = "predeploy") -> dict[str, Any]:
                         "name": "latency_tokens",
                         "passed": True,
                         "skipped": True,
-                        "reason": "no GOOGLE_API_KEY; skipped LLM latency",
+                        "reason": "no OPENROUTER_API_KEY; skipped LLM latency",
                     }
                 )
 

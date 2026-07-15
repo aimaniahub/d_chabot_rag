@@ -64,13 +64,33 @@ if IS_SERVERLESS:
     os.environ.setdefault("XDG_CACHE_HOME", str(_cache))
     os.environ.setdefault("TRANSFORMERS_CACHE", str(_cache / "transformers"))
 
-# Auth / models
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+# Embeddings (local ONNX — not OpenRouter)
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 )
-# 2.0-flash usually has higher free-tier allowance than 2.5-flash
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
+# OpenRouter (LLM only — Gemini removed)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OR_API_KEY")
+OPENROUTER_BASE_URL = os.getenv(
+    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+)
+# Comma-separated free models; tried in order on failure / rate limit
+_default_models = (
+    "google/gemma-4-31b-it:free,"
+    "google/gemma-4-26b-a4b-it:free,"
+    "openai/gpt-oss-20b:free"
+)
+OPENROUTER_MODELS: list[str] = [
+    m.strip()
+    for m in os.getenv("OPENROUTER_MODELS", _default_models).split(",")
+    if m.strip()
+]
+OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "https://darvigroup.in")
+OPENROUTER_SITE_NAME = os.getenv("OPENROUTER_SITE_NAME", "Darvi RAG Assistant")
+
+# Legacy aliases (unused; kept so old env docs don't break imports)
+GEMINI_API_KEY = OPENROUTER_API_KEY
+GEMINI_MODEL = OPENROUTER_MODELS[0] if OPENROUTER_MODELS else ""
 
 # Chunking
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
@@ -87,8 +107,8 @@ MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "3"))
 ABSTAIN_MESSAGE = "I could not find the answer in the provided document."
 
 # LLM
-LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
-LLM_RETRY_BACKOFF_SEC = float(os.getenv("LLM_RETRY_BACKOFF_SEC", "1.5"))
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
+LLM_RETRY_BACKOFF_SEC = float(os.getenv("LLM_RETRY_BACKOFF_SEC", "1.0"))
 
 # Eval gates
 GATE_HIT_AT_K = float(os.getenv("GATE_HIT_AT_K", "0.70"))

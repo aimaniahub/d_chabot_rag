@@ -14,10 +14,10 @@ Do these **in order**. After each section, use the “Check” row before contin
 
 | Variable | Value |
 |----------|--------|
-| `GOOGLE_API_KEY` | Your Gemini API key (**no quotes**) |
+| `OPENROUTER_API_KEY` | Your OpenRouter key (**no quotes**) |
+| `OPENROUTER_MODELS` | `google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,openai/gpt-oss-20b:free` |
 | `AUTO_INGEST_ON_START` | `true` |
 | `CORS_ORIGINS` | `https://darvigroup.in,https://www.darvigroup.in,http://localhost:3000` |
-| `GEMINI_MODEL` | `gemini-2.5-flash` (optional) |
 
 Save → wait for redeploy.
 
@@ -69,7 +69,7 @@ https://dchabotrag-production.up.railway.app/docs
   "language": "en"
 }
 ```
-Expect: `answer` text. If key missing → set `GOOGLE_API_KEY`.
+Expect: `answer` text. If key missing → set `OPENROUTER_API_KEY`.
 
 **Upload company PDF/DOCX (monthly):**
 - Swagger → **POST /ingest/upload** → Choose file → Execute  
@@ -126,7 +126,7 @@ No site redeploy needed for document updates.
 
 | Symptom | Fix |
 |---------|-----|
-| `/chat` → Missing GOOGLE_API_KEY | Set variable on **RAG** service, redeploy |
+| `/chat` → Missing OPENROUTER_API_KEY | Set variable on **RAG** service, redeploy |
 | `postgres.ok: false` | Wire `DATABASE_URL=${{Postgres.DATABASE_URL}}` |
 | Site chat timeout / error | Confirm Netlify `RAG_API_URL`; check Railway logs |
 | Empty index | `/ingest` or upload a PDF; enable `AUTO_INGEST_ON_START` |

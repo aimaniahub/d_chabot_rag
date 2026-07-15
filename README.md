@@ -8,7 +8,7 @@ Designed as a **reusable backend** for a separate frontend (Next.js/Vercel, Reac
 |-------|--------|
 | Embeddings | **fastembed** (ONNX) — no PyTorch / torchvision |
 | Vector store | **Chroma** (persistent) |
-| LLM | **Gemini** via `google-genai` |
+| LLM | **OpenRouter** free models (rotated) |
 | API | **FastAPI** |
 | Deploy | **Docker** → Railway / any container host |
 
@@ -24,7 +24,7 @@ pip install -r requirements.txt
 # optional local UI/tests:
 # pip install -r requirements-dev.txt
 
-copy .env.example .env   # set GOOGLE_API_KEY
+copy .env.example .env   # set OPENROUTER_API_KEY
 
 # Put PDFs in data/
 python app.py ingest --rebuild
@@ -42,7 +42,7 @@ python app.py serve
 ## Docker (recommended for servers)
 
 ```bash
-# .env must contain GOOGLE_API_KEY
+# .env must contain OPENROUTER_API_KEY
 docker compose up --build
 ```
 
@@ -157,7 +157,8 @@ python app.py ingest --rebuild
 
 | Var | Default | Notes |
 |-----|---------|--------|
-| `GOOGLE_API_KEY` | — | Required |
+| `OPENROUTER_API_KEY` | — | Required |
+| `OPENROUTER_MODELS` | free gemma/gpt-oss | Rotated on failure |
 | `CORS_ORIGINS` | `*` | Comma-separated frontend URLs in prod |
 | `PORT` | `8000` | Railway injects this |
 | `AUTO_INGEST_ON_START` | `false` | `true` in Docker compose default |

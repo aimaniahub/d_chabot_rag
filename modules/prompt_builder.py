@@ -1,7 +1,7 @@
-"""Grounded prompt construction with citations and context budget."""
+"""Grounded prompt construction — strict systematic answer format."""
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Sequence
 
 from config import ABSTAIN_MESSAGE, MAX_CONTEXT_CHARS, MAX_HISTORY_TURNS
 from modules.metrics import timer
@@ -23,7 +23,6 @@ def format_context(hits: Sequence[RetrievedChunk], max_chars: int = MAX_CONTEXT_
         )
         header = f"[{i}] source={h.source} {page} score={h.score:.3f}"
         block = f"{header}\n{h.text.strip()}"
-        # +2 for joining newlines
         extra = len(block) + (2 if parts else 0)
         if used + extra > max_chars and parts:
             break
@@ -33,7 +32,6 @@ def format_context(hits: Sequence[RetrievedChunk], max_chars: int = MAX_CONTEXT_
 
 
 def format_history(history: Sequence[dict] | None, max_turns: int = MAX_HISTORY_TURNS) -> str:
-    """history items: {role: user|assistant, content: str}"""
     if not history:
         return ""
     turns = list(history)[-max_turns * 2 :]
@@ -49,10 +47,10 @@ def format_history(history: Sequence[dict] | None, max_turns: int = MAX_HISTORY_
 def _language_instruction(language: str | None) -> str:
     lang = (language or "en").lower()
     if lang in ("kn", "kannada"):
-        return "Reply in Kannada (ಕನ್ನಡ) unless the user clearly uses another language."
+        return "Write the entire answer in Kannada (ಕನ್ನಡ)."
     if lang in ("hi", "hindi"):
-        return "Reply in Hindi (हिंदी) unless the user clearly uses another language."
-    return "Reply in clear English unless the user clearly uses another language."
+        return "Write the entire answer in Hindi (हिंदी)."
+    return "Write the entire answer in clear English."
 
 
 def build_prompt(
@@ -63,7 +61,7 @@ def build_prompt(
     max_context_chars: int = MAX_CONTEXT_CHARS,
     language: str | None = "en",
 ) -> str:
-    """Build grounded QA prompt. `context` may be raw string (legacy) or hits."""
+    """Strict Darvi answer format: header + bullets/para + closing ask."""
     if isinstance(context, str):
         context_block = context
     else:
@@ -73,15 +71,32 @@ def build_prompt(
     history_section = f"\nPrior conversation:\n{history_block}\n" if history_block else ""
     lang_rule = _language_instruction(language)
 
-    return f"""You are Darvi Assistant for Darvi Group (agriculture, plants, farmland, IoT, registration).
+    return f"""You are Darvi Assistant for Darvi Group (plants, horticulture, farmland, IoT, registration, prices).
 
-Rules:
-- Answer using the provided company documents/context first.
+## STRICT OUTPUT FORMAT (always follow exactly)
+1) First line: a short **Header** (bold markdown like **Guava Varieties**). One line only. No intro fluff.
+2) Then the body:
+   - For lists (varieties, prices, steps, items): use bullet points only (`- item`). One fact per bullet. Include price/unit if present in context.
+   - For explanations: short plain paragraphs. No filler. No marketing language.
+3) Do NOT write unnecessary sentences (no "I'd be happy to help", no "Certainly", no long preambles).
+4) Last line MUST be exactly one short follow-up question, e.g. "Is there anything else you need?"
+5) Optional: if you used a document fact, you may add a small citation like [1] on that line — never invent sources.
+
+## CONTENT RULES
+- Answer ONLY from the Context below. Do not invent varieties, prices, or policies.
 - {lang_rule}
-- Be concise, friendly, and structured (short paragraphs or bullets).
-- If the answer is not in the context, say you do not have that detail in the documents and suggest contacting Darvi: +91 99868 90777, darvigroup@gmail.com. Do not invent prices or policies.
-- When you use document facts, cite sources with [n] markers matching the context blocks.
-- Prefer helpful next steps (registration, services, contact) when relevant.
+- If context does not contain the answer, use this exact structure:
+  **Not Found**
+  - {ABSTAIN_MESSAGE}
+  - Contact: +91 99868 90777 | darvigroup@gmail.com
+  Is there anything else you need?
+
+## EXAMPLE SHAPE
+**Guava Varieties**
+- Royl green
+- L-49
+- Taiwan pink
+Is there anything else you need?
 
 Context:
 {context_block}

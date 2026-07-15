@@ -6,7 +6,7 @@ from typing import Any, Optional, Sequence
 
 from config import MIN_SCORE, TOP_K
 from modules.embedder import Embedder
-from modules.llm import GeminiLLM, LLMResult
+from modules.llm import LLMResult, OpenRouterLLM
 from modules.metrics import (
     QueryMetrics,
     TokenUsage,
@@ -45,7 +45,7 @@ class ChatService:
         self,
         store: VectorStore | None = None,
         embedder: Embedder | None = None,
-        llm: GeminiLLM | None = None,
+        llm: OpenRouterLLM | None = None,
         top_k: int | None = None,
         min_score: float | None = None,
     ):
@@ -61,9 +61,9 @@ class ChatService:
             min_score=self.min_score,
         )
 
-    def _ensure_llm(self) -> GeminiLLM:
+    def _ensure_llm(self) -> OpenRouterLLM:
         if self.llm is None:
-            self.llm = GeminiLLM()
+            self.llm = OpenRouterLLM()
         return self.llm
 
     def ask(

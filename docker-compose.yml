@@ -8,8 +8,8 @@ services:
     ports:
       - "${PORT:-8000}:8000"
     environment:
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODELS: ${OPENROUTER_MODELS:-google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,openai/gpt-oss-20b:free}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       AUTO_INGEST_ON_START: ${AUTO_INGEST_ON_START:-true}

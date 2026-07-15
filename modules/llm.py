@@ -1,49 +1,25 @@
-"""Gemini LLM client (google-genai SDK) with retries, 429 handling, model fallback."""
+"""OpenRouter LLM client with free-model rotation (no Gemini)."""
 from __future__ import annotations
 
-import os
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from google import genai
+import httpx
 
 from config import (
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
     LLM_MAX_RETRIES,
     LLM_RETRY_BACKOFF_SEC,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_MODELS,
+    OPENROUTER_SITE_NAME,
+    OPENROUTER_SITE_URL,
 )
 from modules.metrics import timer
 
-# If free-tier quota hits on one model, try others before failing.
-_FALLBACK_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-2.5-flash",
-]
-
-
-def _is_quota_error(exc: BaseException) -> bool:
-    s = str(exc).lower()
-    return (
-        "429" in s
-        or "resource_exhausted" in s
-        or "quota" in s
-        or "rate limit" in s
-    )
-
-
-def _model_chain(primary: str) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for m in [primary, *os.getenv("GEMINI_FALLBACK_MODELS", "").split(","), *_FALLBACK_MODELS]:
-        m = (m or "").strip()
-        if m and m not in seen:
-            seen.add(m)
-            out.append(m)
-    return out
+logger = logging.getLogger("pdf_rag.llm")
 
 
 @dataclass
@@ -53,76 +29,139 @@ class LLMResult:
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
-    model: str = GEMINI_MODEL
+    model: str = ""
     raw: Any = None
 
 
-class GeminiLLM:
-    def __init__(self, api_key: str | None = None, model_name: str | None = None):
-        key = api_key or GEMINI_API_KEY
+def _should_rotate(status_code: int | None, body: str) -> bool:
+    """Rotate model on rate limit, overload, or model unavailable."""
+    if status_code in (402, 408, 429, 502, 503, 524):
+        return True
+    b = (body or "").lower()
+    return any(
+        x in b
+        for x in (
+            "rate limit",
+            "quota",
+            "capacity",
+            "overloaded",
+            "unavailable",
+            "no endpoints",
+            "provider returned error",
+            "timeout",
+        )
+    )
+
+
+class OpenRouterLLM:
+    """Chat completions via OpenRouter; rotates free models on failure."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        models: list[str] | None = None,
+    ):
+        key = api_key or OPENROUTER_API_KEY
         if not key:
             raise RuntimeError(
-                "Missing GOOGLE_API_KEY / GEMINI_API_KEY. Set it in .env / Railway variables"
+                "Missing OPENROUTER_API_KEY. Set it in .env / Railway variables."
             )
-        self.model_name = model_name or GEMINI_MODEL
-        self.client = genai.Client(api_key=key)
+        self.api_key = key
+        self.models = models or list(OPENROUTER_MODELS)
+        if not self.models:
+            raise RuntimeError("No OpenRouter models configured (OPENROUTER_MODELS).")
+        self.base_url = OPENROUTER_BASE_URL.rstrip("/")
 
     def generate(self, prompt: str) -> str:
         return self.generate_with_usage(prompt).text
 
     def generate_with_usage(self, prompt: str) -> LLMResult:
         last_err: Exception | None = None
-        models = _model_chain(self.model_name)
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": OPENROUTER_SITE_URL,
+            "X-OpenRouter-Title": OPENROUTER_SITE_NAME,
+        }
 
-        for model in models:
+        for model in self.models:
             for attempt in range(LLM_MAX_RETRIES + 1):
                 try:
                     with timer() as t:
-                        response = self.client.models.generate_content(
-                            model=model,
-                            contents=prompt,
+                        with httpx.Client(timeout=60.0) as client:
+                            resp = client.post(
+                                f"{self.base_url}/chat/completions",
+                                headers=headers,
+                                json={
+                                    "model": model,
+                                    "messages": [
+                                        {
+                                            "role": "user",
+                                            "content": prompt,
+                                        }
+                                    ],
+                                    "temperature": 0.2,
+                                    "max_tokens": 1024,
+                                },
+                            )
+                    body_text = resp.text
+                    if resp.status_code >= 400:
+                        if _should_rotate(resp.status_code, body_text):
+                            logger.warning(
+                                "OpenRouter model %s failed (%s); rotating. %s",
+                                model,
+                                resp.status_code,
+                                body_text[:200],
+                            )
+                            last_err = RuntimeError(
+                                f"{model} HTTP {resp.status_code}: {body_text[:300]}"
+                            )
+                            break  # next model
+                        last_err = RuntimeError(
+                            f"{model} HTTP {resp.status_code}: {body_text[:300]}"
                         )
-                    text = (getattr(response, "text", None) or "").strip()
+                        if attempt < LLM_MAX_RETRIES:
+                            time.sleep(LLM_RETRY_BACKOFF_SEC * (attempt + 1))
+                            continue
+                        break
+
+                    data = resp.json()
+                    choices = data.get("choices") or []
+                    if not choices:
+                        last_err = RuntimeError(f"{model}: empty choices")
+                        break
+                    msg = choices[0].get("message") or {}
+                    text = (msg.get("content") or "").strip()
                     if not text:
-                        try:
-                            cands = response.candidates or []
-                            if cands and cands[0].content and cands[0].content.parts:
-                                text = "".join(
-                                    getattr(p, "text", "") or ""
-                                    for p in cands[0].content.parts
-                                ).strip()
-                        except Exception:  # noqa: BLE001
-                            text = ""
+                        last_err = RuntimeError(f"{model}: empty content")
+                        break
 
-                    prompt_tokens = completion_tokens = total_tokens = None
-                    meta = getattr(response, "usage_metadata", None)
-                    if meta is not None:
-                        prompt_tokens = getattr(meta, "prompt_token_count", None)
-                        completion_tokens = getattr(meta, "candidates_token_count", None)
-                        total_tokens = getattr(meta, "total_token_count", None)
-
+                    usage = data.get("usage") or {}
                     return LLMResult(
                         text=text,
                         elapsed_ms=t["ms"],
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        total_tokens=total_tokens,
+                        prompt_tokens=usage.get("prompt_tokens"),
+                        completion_tokens=usage.get("completion_tokens"),
+                        total_tokens=usage.get("total_tokens"),
                         model=model,
-                        raw=response,
+                        raw=data,
                     )
+                except httpx.TimeoutException as exc:
+                    last_err = exc
+                    logger.warning("OpenRouter timeout on %s", model)
+                    break  # rotate model
                 except Exception as exc:  # noqa: BLE001
                     last_err = exc
-                    if _is_quota_error(exc):
-                        # Try next model immediately (free-tier often per-model)
-                        break
-                    if attempt >= LLM_MAX_RETRIES:
-                        break
-                    time.sleep(LLM_RETRY_BACKOFF_SEC * (attempt + 1))
+                    logger.warning("OpenRouter error on %s: %s", model, exc)
+                    if attempt < LLM_MAX_RETRIES:
+                        time.sleep(LLM_RETRY_BACKOFF_SEC * (attempt + 1))
+                        continue
+                    break
 
-        if last_err and _is_quota_error(last_err):
-            raise RuntimeError(
-                "Gemini quota exceeded (free tier). Wait a minute, or set a paid "
-                "Google AI key / change GEMINI_MODEL on Railway. "
-                f"Detail: {last_err}"
-            ) from last_err
-        raise RuntimeError(f"Gemini generation failed: {last_err}") from last_err
+        raise RuntimeError(
+            f"OpenRouter generation failed on all models {self.models}: {last_err}"
+        ) from last_err
+
+
+# Backward-compatible alias used by chat module / older imports
+GeminiLLM = OpenRouterLLM
