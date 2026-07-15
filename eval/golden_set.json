@@ -1,0 +1,23 @@
+[
+  {
+    "id": "q1",
+    "question": "What is Core Technologies?",
+    "expected_doc_id": "ragd.pdf",
+    "expected_keywords": ["Artificial Intelligence", "technology"],
+    "notes": "Company overview"
+  },
+  {
+    "id": "q2",
+    "question": "What are the core services offered?",
+    "expected_doc_id": "ragd.pdf",
+    "expected_keywords": ["automation", "SaaS"],
+    "notes": "Services section"
+  },
+  {
+    "id": "q3",
+    "question": "What is the company vision?",
+    "expected_doc_id": "ragd.pdf",
+    "expected_keywords": ["AI-powered", "innovation"],
+    "notes": "Vision section"
+  }
+]

@@ -1,0 +1,29 @@
+# Local production-like stack
+#   docker compose up --build
+# API: http://localhost:8000/docs
+services:
+  api:
+    build: .
+    container_name: pdf-rag-api
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      AUTO_INGEST_ON_START: ${AUTO_INGEST_ON_START:-true}
+      PORT: "8000"
+      DATA_DIR: /app/data
+      STORAGE_DIR: /app/storage
+    volumes:
+      # Persist index + uploaded PDFs across restarts
+      - ./data:/app/data
+      - ./storage:/app/storage
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped

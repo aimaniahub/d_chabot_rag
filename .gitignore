@@ -1,0 +1,42 @@
+# Python
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env & secrets (never commit)
+.env
+.env.local
+.env.*.local
+
+# Runtime data
+storage/**
+!storage/.gitkeep
+eval_reports/**
+!eval_reports/.gitkeep
+embeddings/
+.cache/
+*.log
+
+# PDFs: track only the small public demo sample
+data/*
+!data/.gitkeep
+!data/ragd.pdf
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.streamlit/
+
+# Docker
+docker-data/
