@@ -114,7 +114,7 @@ def _ingest_file_inner(
             path=str(path),
             doc_id=doc_id,
             status="failed",
-            error=f"unsupported type {path.suffix}; use PDF or DOCX",
+            error=f"unsupported type {path.suffix}; use PDF, DOCX, MD, or TXT",
         )
 
     try:
